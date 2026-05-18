@@ -1,0 +1,32 @@
+# docker-compose.prod.yml — production overrides
+# Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+services:
+
+  db:
+    ports: []              # don't expose DB port in prod
+
+  redis:
+    ports: []              # don't expose Redis port in prod
+
+  backend:
+    command: gunicorn callback.wsgi:application --bind 0.0.0.0:8000 --workers 3 --timeout 120
+    volumes: []            # no live mount in prod — use built image
+    environment:
+      - DEBUG=False
+
+  celery:
+    volumes: []
+    environment:
+      - DEBUG=False
+
+  celery-beat:
+    volumes: []
+    environment:
+      - DEBUG=False
+
+  frontend:
+    command: node server.js      # runs next start (assumes next build already ran)
+    volumes: []
+    environment:
+      - NODE_ENV=production
