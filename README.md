@@ -1,6 +1,6 @@
-# callback# Callback
+# Callback
 
-AI-powered job application agent. Runs daily per user, fetches jobs, scores relevance via LLM, submits applications autonomously.
+AI-powered job application agent. Runs daily per user — fetches jobs, scores relevance via LLM, submits applications autonomously via ATS APIs or browser automation.
 
 ---
 
@@ -8,31 +8,78 @@ AI-powered job application agent. Runs daily per user, fetches jobs, scores rele
 
 | Layer | Tech |
 |---|---|
-| Frontend / API routes | Next.js (App Router) |
-| Hosting | Vercel (serverless) |
-| Database + Storage | Supabase (Postgres + S3-compatible storage) |
-| Auth | Supabase Auth |
-| Background jobs | Inngest |
+| Frontend | Next.js (JS) |
+| Backend | Django + DRF |
+| Auth | Django auth + simplejwt |
+| ORM | Django ORM |
+| Database | Postgres (Docker) |
+| Job queue | Celery + Redis (Docker) |
+| Browser automation | AWS Lambda + Browser Use |
+| Lambda deploy | Zip upload (→ SAM later) |
 | Job discovery | JSearch API (RapidAPI) |
 | LLM | Anthropic API (claude-sonnet-4-6) |
-| Browser automation | Browserbase + Browser Use |
+| File storage | AWS S3 |
 | Email | Resend |
+| Error tracking | Sentry |
+| Uptime | UptimeRobot |
+| Reverse proxy | Nginx (host) |
+| DNS + SSL | Cloudflare |
+| Payments | Stripe (post-MVP) |
+| Backups | pg_dump → S3 (cron) |
+
+---
+
+## Infrastructure
+
+Self-hosted on Dell OptiPlex 7040. Browser Use jobs isolated to AWS Lambda — never touch the home server.
+
+```
+Host (OptiPlex)
+├── Nginx (reverse proxy, host-level)
+├── callback/docker-compose.yml
+│   ├── django (gunicorn :8002)
+│   ├── celery worker
+│   ├── redis
+│   └── postgres
+└── portfolio/docker-compose.yml
+    ├── django (gunicorn :8001)
+    └── postgres
+
+AWS
+└── Lambda: callback-submit-application (Browser Use)
+
+S3
+├── resumes/
+├── cover_letters/
+└── backups/
+```
 
 ---
 
 ## Env Vars
 
 ```bash
-NEXT_PUBLIC_SUPABASE_URL=
-NEXT_PUBLIC_SUPABASE_ANON_KEY=
-SUPABASE_SERVICE_ROLE_KEY=
+SECRET_KEY=
+DEBUG=
+ALLOWED_HOSTS=
+DATABASE_URL=
+
+AWS_ACCESS_KEY_ID=
+AWS_SECRET_ACCESS_KEY=
+AWS_S3_BUCKET=
+AWS_LAMBDA_FUNCTION_NAME=
+AWS_REGION=
+
 ANTHROPIC_API_KEY=
 JSEARCH_API_KEY=
-BROWSERBASE_API_KEY=
-BROWSERBASE_PROJECT_ID=
 RESEND_API_KEY=
-INNGEST_EVENT_KEY=
-INNGEST_SIGNING_KEY=
+STRIPE_SECRET_KEY=
+STRIPE_WEBHOOK_SECRET=
+
+SENTRY_DSN=
+
+CELERY_BROKER_URL=redis://redis:6379/0
+CELERY_RESULT_BACKEND=redis://redis:6379/0
 ```
 
 ---
@@ -40,109 +87,207 @@ INNGEST_SIGNING_KEY=
 ## Project Structure
 
 ```
-/app
-  /api
-    /inngest         # Inngest function handler
-    /webhooks        # Resend webhooks (optional)
-  /dashboard         # User-facing UI
-  /onboarding        # Profile + upload flow
-/inngest
-  /functions
-    scan-jobs.ts     # Main daily loop per user
-    score-jobs.ts    # LLM relevance scoring
-    apply-job.ts     # Submission orchestration
-    send-digest.ts   # Email digest
-/lib
-  /llm               # Prompt templates + API wrappers
-  /browser           # Browserbase + Browser Use helpers
-  /jsearch           # JSearch API client
-  /ats               # Greenhouse + Lever direct API clients
-  /supabase          # DB client + typed queries
+/frontend
+  /app
+    /dashboard       # history, pause/resume, preferences
+    /onboarding      # profile setup, file upload
+
+/backend
+  /callback
+    /api             # DRF endpoints
+    /models          # User, Preferences, Resume, Application, JobSeen
+    /tasks
+      scan_jobs.py   # JSearch fetch + dedup
+      score_jobs.py  # LLM scoring
+      apply_job.py   # ATS detection + Lambda dispatch
+      send_digest.py # Resend daily email
+    /llm             # Prompt templates + Anthropic client
+    /ats             # Greenhouse + Lever API clients
+    /jsearch         # JSearch client
+    /storage         # S3 helpers
+
+/lambda
+  handler.py         # Browser Use submission
+  requirements.txt
+  deploy.sh          # zip + aws lambda update-function-code
 ```
 
 ---
 
-## Daily Job Loop
+## Daily Loop
 
 ```
-Inngest cron (per user, daily)
-  → JSearch: fetch jobs matching user prefs
-  → Supabase: dedup check (jobs_seen table)
-  → LLM: score each new job (1–10) against user profile
-  → Select top 1–5 by score
-  → For each job:
-      → Check if Greenhouse/Lever apply URL exists → use API
-      → Else → Browserbase + Browser Use to fill + submit form
-      → LLM: generate tailored cover letter from template
-      → Write result to applications table (submitted | failed)
-  → Resend: send digest email with day's activity
-```
-
----
-
-## Database Tables
-
-```sql
-users                   -- auth, managed by Supabase Auth
-user_preferences        -- role_titles[], cities[], remote_pref, active bool
-resumes                 -- storage_path, uploaded_at, user_id
-cover_letter_templates  -- body text, user_id
-jobs_seen               -- job_id, user_id, seen_at (dedup)
-applications            -- job_id, user_id, company, role_title, status,
-                        --   submission_method, applied_at, cover_letter_used
+Celery beat cron (daily, per active user)
+  → JSearch: fetch jobs by role_titles + cities + remote_pref
+  → Postgres: dedup against jobs_seen
+  → LLM: score each new job (1-10) vs user profile
+  → Select top N (default 5)
+  → Per job:
+      → Greenhouse URL → Greenhouse API
+      → Lever URL     → Lever API
+      → Other         → invoke Lambda (Browser Use)
+      → LLM: personalize cover letter
+      → Write to applications table
+  → Resend: daily digest email
 ```
 
 ---
 
 ## LLM Calls
 
-**Scoring** — one call per unseen job:
+**Scoring:**
 ```
-system: You are a job fit evaluator...
-user:   Job: {title, description, requirements}
-        Profile: {target_roles, skills, experience_summary}
-        Return JSON: { score: 1-10, reason: string }
+system: You are a job fit evaluator. Return only JSON.
+user:   Job: {title, company, description, requirements}
+        Profile: {target_roles, skills, experience_summary, remote_pref}
+        Return: { "score": 1-10, "reason": "string" }
 ```
 
-**Cover letter** — one call per application:
+**Cover letter:**
 ```
-system: You are a cover letter writer. Modify only: company name, role title,
-        and one sentence in the opening paragraph. Keep everything else verbatim.
+system: Modify only: company name, role title, and one opening sentence.
+        Return only the full cover letter text.
 user:   Template: {cover_letter_text}
-        Job: {company, role_title, one_line_description}
+        Job: {company, role_title, brief_description}
 ```
 
 ---
 
-## Submission Methods
+## Lambda
 
-| Method | When | Reliability |
-|---|---|---|
-| Greenhouse API | `job_apply_link` matches `boards.greenhouse.io` | ~100% |
-| Lever API | `job_apply_link` matches `jobs.lever.co` | ~100% |
-| Browserbase + Browser Use | Everything else | ~70–80% |
+**Function:** `callback-submit-application`
 
-Failed submissions → logged as `status: failed` → surfaced in digest email.
+**Payload:**
+```json
+{
+  "job_url": "...",
+  "apply_url": "...",
+  "resume_s3_key": "resumes/user_123.pdf",
+  "cover_letter": "...",
+  "user_id": 123,
+  "application_id": 456
+}
+```
+
+One invocation per application (fan-out). Lambda writes result back to `applications` table directly. 15 min timeout — single application fits comfortably.
+
+**Deploy:**
+```bash
+cd lambda
+pip install -r requirements.txt -t package/
+cp handler.py package/
+cd package && zip -r ../function.zip .
+aws lambda update-function-code \
+  --function-name callback-submit-application \
+  --zip-file fileb://../function.zip
+```
 
 ---
 
-## Cost (MVP scale)
+## Database
 
-| Service | Free tier | Paid |
+```sql
+users                    -- Django auth
+user_preferences         -- role_titles[], cities[], remote_pref, active, daily_limit
+resumes                  -- s3_key, uploaded_at, user_id
+cover_letter_templates   -- body, user_id
+jobs_seen                -- job_id, user_id, seen_at
+applications             -- job_id, user_id, company, role_title, status,
+                         --   submission_method, applied_at, cover_letter_used,
+                         --   lambda_invocation_id, failure_reason
+```
+
+`status`: `pending` `submitted` `failed` `skipped`
+`submission_method`: `greenhouse_api` `lever_api` `browser_lambda`
+
+---
+
+## Monitoring
+
+**Sentry** — add to `settings.py`:
+```python
+import sentry_sdk
+sentry_sdk.init(dsn=env("SENTRY_DSN"), traces_sample_rate=0.2)
+```
+
+**UptimeRobot** — monitor:
+- `https://yourcallbackdomain.com/api/health/` (Django)
+- `https://yourcallbackdomain.com` (Next.js)
+
+**Health endpoint:**
+```python
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def health(request):
+    return Response({"status": "ok"})
+```
+
+---
+
+## Backups
+
+```bash
+# /etc/cron.d/callback-backup — runs 3am daily
+0 3 * * * root pg_dump $DATABASE_URL | gzip | \
+  aws s3 cp - s3://callback-backups/$(date +%Y-%m-%d).sql.gz
+```
+
+30-day retention. Cost: negligible.
+
+---
+
+## Submission Reliability
+
+| Method | Condition | Reliability |
 |---|---|---|
-| JSearch | ~200–500 req/mo | $10–50/mo |
-| Anthropic API | — | <$0.01/application |
-| Browserbase | 1 hr, 1 concurrent | $20/mo (Developer) |
-| Inngest | 50k runs/mo | $75/mo (Pro) |
-| Resend | 3k emails/mo | $20/mo (Pro) |
-| Supabase | Generous | $25/mo (Pro) |
-| Vercel | Generous | $20/mo (Pro) |
+| Greenhouse API | URL contains `boards.greenhouse.io` | ~100% |
+| Lever API | URL contains `jobs.lever.co` | ~100% |
+| Browser Use (Lambda) | everything else | ~70-80% |
+
+Failures logged + surfaced in digest. User handles manually.
 
 ---
 
 ## Roadmap
 
-- **MVP** — profile setup, upload, daily scan, LLM scoring, submission, digest, dedup
-- **V2** — approve-before-apply (SMS/in-app), better failure visibility
-- **V3** — modular resume: discrete blurbs → LLM assembly → PDF generation per application
-- **V4** — multi-vertical config, interview prep loop, analytics dashboard
+**MVP**
+- [ ] Django + Next.js, Dockerized
+- [ ] Nginx host config
+- [ ] Models + migrations
+- [ ] Auth (simplejwt)
+- [ ] Onboarding + file upload → S3
+- [ ] Celery beat cron
+- [ ] JSearch client + fetch + dedup
+- [ ] LLM scoring
+- [ ] Greenhouse + Lever clients
+- [ ] Lambda (Browser Use) + deploy script
+- [ ] Cover letter personalization
+- [ ] Fan-out Lambda dispatch
+- [ ] Digest email (Resend)
+- [ ] Dashboard
+- [ ] Sentry + UptimeRobot
+- [ ] pg_dump → S3 cron
+- [ ] Deploy
+
+**V2** — approve-before-apply (SMS), expanded boards, retry logic, Stripe
+
+**V3** — modular resume, LLM assembly, PDF generation per application
+
+**V4** — multi-vertical, interview prep, analytics, staging environment
+
+---
+
+## Cost (MVP, minimal users)
+
+| Service | Free tier | Paid |
+|---|---|---|
+| JSearch | ~200-500 req/mo | $10-50/mo |
+| Anthropic | — | <$0.01/application |
+| AWS Lambda | 1M invocations/mo | Negligible |
+| AWS S3 | 5GB free | Pennies |
+| Resend | 3k emails/mo | $20/mo |
+| Sentry | 5k errors/mo | Free at MVP |
+| UptimeRobot | 50 monitors | Free |
+| Stripe | No monthly fee | 2.9% + $0.30/txn |
+
+**Estimated MVP cost: ~$0-30 CAD/mo**
