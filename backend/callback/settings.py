@@ -117,6 +117,9 @@ SIMPLE_JWT = {
     'AUTH_HEADER_TYPES': ('Bearer',),
 }
 
+# Cookie config
+AUTH_COOKIE_MAX_AGE = 60 * 60 * 24 * 7  # 7 days
+
 # -----------------------------------------------------------------
 # Internationalisation
 # -----------------------------------------------------------------
