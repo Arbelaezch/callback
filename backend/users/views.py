@@ -1,13 +1,21 @@
 from django.contrib.auth import get_user_model
-from django.conf import settings
+from django.db import transaction
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
+from django.conf import settings
 
-from .serializers import RegisterSerializer, UserSerializer
+from .serializers import (
+    RegisterSerializer,
+    UserSerializer,
+    OnboardingSerializer,
+)
+from .models import Resume, CoverLetterTemplate
+from jobs.models import JobSearch
+from callback.storage import upload_resume
 
 User = get_user_model()
 
@@ -69,7 +77,7 @@ class LoginView(APIView):
         password = request.data.get('password')
 
         # SOCIAL AUTH SCAFFOLD:
-        # provider = request.data.get('provider')  # 'google', 'github', etc.
+        # provider = request.data.get('provider')
         # if provider:
         #     return self.social_login(provider, request.data.get('token'))
 
@@ -108,3 +116,73 @@ class MeView(APIView):
 
     def get(self, request):
         return Response(UserSerializer(request.user).data)
+
+
+class OnboardingView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        # Free tier: one resume only
+        if Resume.objects.filter(user=request.user).exists():
+            return Response(
+                {'detail': 'You have already completed onboarding. Upgrade your plan to add more resumes.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        serializer = OnboardingSerializer(data={
+            **request.data,
+            'resume': request.FILES.get('resume'),
+        })
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        data = serializer.validated_data
+
+        with transaction.atomic():
+            resume = Resume.objects.create(
+                user=request.user,
+                s3_key='',           # placeholder until upload completes
+                filename=data['resume'].name,
+                is_default=True,
+                status='pending',
+            )
+
+            cover_letter = CoverLetterTemplate.objects.create(
+                user=request.user,
+                label=data['cover_letter_label'],
+                body=data['cover_letter_body'],
+                is_default=True,
+            )
+
+            # Free tier: one search only
+            JobSearch.objects.create(
+                user=request.user,
+                label=data.get('label', ''),
+                role_titles=data['role_titles'],
+                cities=data.get('cities', []),
+                location_types=data.get('location_types', []),
+                seniority_levels=data.get('seniority_levels', []),
+                years_experience=data.get('years_experience'),
+                salary_min=data.get('salary_min'),
+                excluded_companies=data.get('excluded_companies', []),
+                resume=resume,
+                cover_letter_template=cover_letter,
+                daily_limit=5,
+                active=True,
+            )
+        
+        # Upload outside transaction — record exists, status tracks progress
+        try:
+            s3_key = upload_resume(data['resume'], request.user.id)
+            resume.s3_key = s3_key
+            resume.status = 'ready'
+            resume.save(update_fields=['s3_key', 'status'])
+        except Exception:
+            resume.status = 'failed'
+            resume.save(update_fields=['status'])
+            return Response(
+                {'detail': 'Resume upload failed. Please try again.'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        return Response({'detail': 'Onboarding complete.'}, status=status.HTTP_201_CREATED)

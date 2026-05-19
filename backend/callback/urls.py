@@ -7,6 +7,7 @@ from users.views import (
     LoginView,
     LogoutView,
     MeView,
+    OnboardingView,
     # SOCIAL AUTH SCAFFOLD:
     # SocialAuthView,  # future: /api/auth/social/ — handles Google, GitHub, etc.
 )
@@ -20,6 +21,9 @@ urlpatterns = [
     path('api/auth/logout/', LogoutView.as_view(), name='logout'),
     path('api/auth/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('api/auth/me/', MeView.as_view(), name='me'),
+
+    # Onboarding
+    path('api/onboarding/', OnboardingView.as_view(), name='onboarding'),
 
     # SOCIAL AUTH SCAFFOLD:
     # path('api/auth/social/', SocialAuthView.as_view(), name='social_auth'),
