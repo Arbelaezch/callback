@@ -76,12 +76,14 @@ S3
       layout.js          # root layout
       page.js            # redirects to /dashboard
     /components
-      /ui                # shared UI components
+      /ui
+        TagInput.js      # tag/chip input for arrays
+    /hooks
+      /onboarding
+        useChoices.js    # fetches + caches job choice fields from API
     /lib
       api.js             # fetch wrapper — all API calls go through here
       auth.js            # auth helpers (login, logout, register, getMe)
-    /hooks
-      onboarding         # useChoices hook
     middleware.js        # route protection — redirects unauthenticated users
 
 /backend
@@ -94,20 +96,22 @@ S3
     /llm                 # prompt templates + Anthropic client
     /ats                 # Greenhouse + Lever API clients
     /jsearch             # JSearch client
-    /storage             # S3 helpers
     db_config.py         # database config logic (dev vs prod)
     health.py            # /api/health/ endpoint
     settings.py          # Django settings — reads from .env via python-dotenv
+    storage.py           # S3 helpers (upload, delete) — dev stub, prod S3
     urls.py              # root URL config
   /users
     admin.py
     authentication.py    # CookieJWTAuthentication backend
     models.py            # CustomUser, Resume, CoverLetterTemplate
-    serializers.py       # RegisterSerializer, UserSerializer
-    views.py             # RegisterView, LoginView, LogoutView, MeView
+    serializers.py       # RegisterSerializer, UserSerializer, OnboardingSerializer
+    views.py             # RegisterView, LoginView, LogoutView, MeView, OnboardingView
   /jobs
     admin.py
     models.py            # JobSearch, JobSeen, Application, DailyRunLog
+    views.py             # ChoicesView
+    urls.py              # /api/jobs/choices/
 
 /lambda
   handler.py             # Browser Use submission
@@ -121,7 +125,7 @@ S3
 
 ```
 users (CustomUser)       -- extends AbstractUser, created_at/updated_at
-resumes                  -- s3_key, filename, is_default, user_id
+resumes                  -- s3_key, filename, is_default, status, user_id
 cover_letter_templates   -- label, body, is_default, user_id
 job_searches             -- role_titles[], cities[], location_types[], seniority_levels[],
                          --   years_experience, salary_min, excluded_companies[],
@@ -135,6 +139,7 @@ daily_run_logs           -- job_search_id, run_at, jobs_fetched, jobs_scored,
                          --   jobs_applied, jobs_failed, jobs_skipped, status, error
 ```
 
+`status` (resume): `pending` `ready` `failed` — two-phase upload pattern; daily loop only uses `ready` resumes
 `status` (application): `pending` `submitted` `failed` `skipped`
 `status` (daily_run_log): `running` `completed` `partial` `failed`
 `submission_method`: `greenhouse_api` `lever_api` `browser_lambda`
@@ -197,6 +202,21 @@ Scaffolded for future social auth at `/api/auth/social/` and password reset/emai
 
 ---
 
+## File Upload — Two-Phase Pattern
+
+Resume uploads use a two-phase pattern to avoid orphaned files or records:
+
+1. Create `Resume` record with `status='pending'` and empty `s3_key` inside `transaction.atomic()`
+2. Upload file to S3 (or dev stub) outside the transaction
+3. On success: update `s3_key` and `status='ready'`
+4. On failure: update `status='failed'`, return error to user
+
+Daily loop tasks must filter `resume__status='ready'` when selecting resumes for applications.
+
+`storage.py` currently stubs S3 — saves to `/tmp/` in dev. Replace the stub with real boto3 calls when S3 is configured.
+
+---
+
 ## Lambda
 
 **Function:** `callback-submit-application` — one invocation per application (fan-out). Lambda writes result directly back to Postgres on completion. 15-min timeout.
@@ -242,8 +262,9 @@ aws lambda update-function-code \
 - [x] Django + Next.js, Dockerized
 - [x] Models + migrations
 - [x] Auth (simplejwt + httpOnly cookies)
+- [x] Onboarding + file upload (dev stub — S3 wiring pending)
 - [ ] Nginx host config
-- [ ] Onboarding + file upload → S3
+- [ ] Wire up S3 for real file uploads
 - [ ] Celery beat cron
 - [ ] JSearch client + fetch + dedup
 - [ ] LLM scoring
@@ -281,10 +302,6 @@ aws lambda update-function-code \
 - Keep `"use client"` components small and pushed to the leaves of the tree
 - No class components — functional components only
 
-### Hooks
-- Custom hooks live in `src/hooks/` organized by feature (e.g. `hooks/onboarding/useChoices.js`)
-- Import via `@/hooks/feature/useHookName`
-
 ### Data Fetching
 - Fetch data in Server Components using async/await directly
 - Use `fetch()` with Next.js cache options (`{ cache: 'no-store' }` or `{ next: { revalidate: N } }`)
@@ -304,9 +321,15 @@ aws lambda update-function-code \
 - Never use relative imports that traverse up more than one level
 
 ### Styling
-- Tailwind CSS only
+- Tailwind CSS only — design tokens defined as CSS variables in `globals.css`
+- Dark theme, cool blue/slate palette — see `globals.css` for variable definitions
+- `tailwind.config.js` maps all CSS variables to Tailwind color tokens
 - No CSS modules, no styled-components, no emotion
 - No inline `style` props unless dynamically computed
+
+### Hooks
+- Custom hooks live in `src/hooks/` organized by feature (e.g. `hooks/onboarding/useChoices.js`)
+- Import via `@/hooks/feature/useHookName`
 
 ### Images
 - Always use `next/image` — never a raw `<img>` tag
@@ -325,6 +348,7 @@ aws lambda update-function-code \
 
 ### API Communication
 - All API calls go through `src/lib/api.js` — never call fetch directly in components
+- Exception: multipart file uploads use `api.multipart()` which omits `Content-Type` so the browser sets the boundary
 - Django backend at `process.env.NEXT_PUBLIC_API_URL`
 - JWT stored in httpOnly cookie — never localStorage
 - Always pass `credentials: 'include'` — handled by `api.js`
