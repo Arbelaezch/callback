@@ -82,13 +82,7 @@ export default function OnboardingPage() {
       if (salaryMin) formData.append('salary_min', salaryMin);
       excludedCompanies.forEach((c) => formData.append('excluded_companies', c));
 
-      await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/onboarding/`, {
-        method: 'POST',
-        credentials: 'include',
-        body: formData,
-        // No Content-Type — browser sets multipart boundary automatically
-      });
-
+      await api.multipart('/api/onboarding/', formData);
       router.push('/dashboard');
     } catch (err) {
       setError(err.detail || 'Something went wrong. Please try again.');
