@@ -1,6 +1,7 @@
-from pathlib import Path
-from dotenv import load_dotenv
 import os
+from datetime import timedelta
+from dotenv import load_dotenv
+from pathlib import Path
 
 from callback.db_config import get_database_config
 
@@ -38,6 +39,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'corsheaders',
     'django_celery_beat',
+    'rest_framework_simplejwt.token_blacklist',
 
     # local
     'users',
@@ -93,6 +95,29 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 # -----------------------------------------------------------------
+# DRF
+# -----------------------------------------------------------------
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': (
+        'users.authentication.CookieJWTAuthentication',
+    ),
+    'DEFAULT_PERMISSION_CLASSES': (
+        'rest_framework.permissions.IsAuthenticated',
+    ),
+}
+ 
+# -----------------------------------------------------------------
+# Simple JWT
+# -----------------------------------------------------------------
+SIMPLE_JWT = {
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=15),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
+    'ROTATE_REFRESH_TOKENS': True,
+    'BLACKLIST_AFTER_ROTATION': True,
+    'AUTH_HEADER_TYPES': ('Bearer',),
+}
+
+# -----------------------------------------------------------------
 # Internationalisation
 # -----------------------------------------------------------------
 LANGUAGE_CODE = 'en-us'
@@ -122,6 +147,7 @@ CORS_ALLOWED_ORIGINS = (
     if DEBUG
     else [o.strip() for o in os.environ['CORS_ALLOWED_ORIGINS'].split(',')]
 )
+CORS_ALLOW_CREDENTIALS = True
 
 # -----------------------------------------------------------------
 # Security (prod only)
