@@ -66,33 +66,53 @@ S3
 
 ```
 /frontend
-  /app
-    /dashboard       # history, pause/resume, preferences
-    /onboarding      # profile setup, file upload
+  /src
+    /app
+      /(auth)
+        /login           # login page
+        /register        # register page
+      /dashboard         # history, pause/resume, preferences
+      /onboarding        # profile setup, file upload
+      layout.js          # root layout
+      page.js            # redirects to /dashboard
+    /components
+      /ui                # shared UI components
+    /lib
+      api.js             # fetch wrapper — all API calls go through here
+      auth.js            # auth helpers (login, logout, register, getMe)
+    /hooks
+      onboarding         # useChoices hook
+    middleware.js        # route protection — redirects unauthenticated users
 
 /backend
   /callback
-    /api             # DRF endpoints
     /tasks
-      scan_jobs.py   # JSearch fetch + dedup
-      score_jobs.py  # LLM scoring
-      apply_job.py   # ATS detection + Lambda dispatch
-      send_digest.py # daily digest email
-    /llm             # prompt templates + Anthropic client
-    /ats             # Greenhouse + Lever API clients
-    /jsearch         # JSearch client
-    /storage         # S3 helpers
-    db_config.py     # database config logic (dev vs prod)
-    settings.py      # Django settings — reads from .env via python-dotenv
+      scan_jobs.py       # JSearch fetch + dedup
+      score_jobs.py      # LLM scoring
+      apply_job.py       # ATS detection + Lambda dispatch
+      send_digest.py     # daily digest email
+    /llm                 # prompt templates + Anthropic client
+    /ats                 # Greenhouse + Lever API clients
+    /jsearch             # JSearch client
+    /storage             # S3 helpers
+    db_config.py         # database config logic (dev vs prod)
+    health.py            # /api/health/ endpoint
+    settings.py          # Django settings — reads from .env via python-dotenv
+    urls.py              # root URL config
   /users
-    models.py        # CustomUser, Resume, CoverLetterTemplate
+    admin.py
+    authentication.py    # CookieJWTAuthentication backend
+    models.py            # CustomUser, Resume, CoverLetterTemplate
+    serializers.py       # RegisterSerializer, UserSerializer
+    views.py             # RegisterView, LoginView, LogoutView, MeView
   /jobs
-    models.py        # JobSearch, JobSeen, Application, DailyRunLog
+    admin.py
+    models.py            # JobSearch, JobSeen, Application, DailyRunLog
 
 /lambda
-  handler.py         # Browser Use submission
+  handler.py             # Browser Use submission
   requirements.txt
-  deploy.sh          # zip + aws lambda update-function-code
+  deploy.sh              # zip + aws lambda update-function-code
 ```
 
 ---
@@ -162,6 +182,21 @@ Cost: <$0.01 per application at current Anthropic pricing.
 
 ---
 
+## Auth
+
+JWT via `djangorestframework-simplejwt`. Tokens stored in httpOnly cookies — never localStorage.
+
+- `access_token` cookie — 15 min lifetime
+- `refresh_token` cookie — 7 day lifetime, rotated on refresh, blacklisted on logout
+- `CookieJWTAuthentication` in `users/authentication.py` reads token from cookie, falls back to Authorization header
+- All endpoints require `IsAuthenticated` unless explicitly decorated with `@permission_classes([AllowAny])`
+- `secure=not DEBUG` on cookies — works over HTTP in dev, HTTPS only in prod
+- Open redirect protection on the `next` param in middleware and login page — only relative paths accepted
+
+Scaffolded for future social auth at `/api/auth/social/` and password reset/email verification endpoints.
+
+---
+
 ## Lambda
 
 **Function:** `callback-submit-application` — one invocation per application (fan-out). Lambda writes result directly back to Postgres on completion. 15-min timeout.
@@ -206,8 +241,8 @@ aws lambda update-function-code \
 **MVP**
 - [x] Django + Next.js, Dockerized
 - [x] Models + migrations
+- [x] Auth (simplejwt + httpOnly cookies)
 - [ ] Nginx host config
-- [ ] Auth (simplejwt)
 - [ ] Onboarding + file upload → S3
 - [ ] Celery beat cron
 - [ ] JSearch client + fetch + dedup
@@ -246,6 +281,10 @@ aws lambda update-function-code \
 - Keep `"use client"` components small and pushed to the leaves of the tree
 - No class components — functional components only
 
+### Hooks
+- Custom hooks live in `src/hooks/` organized by feature (e.g. `hooks/onboarding/useChoices.js`)
+- Import via `@/hooks/feature/useHookName`
+
 ### Data Fetching
 - Fetch data in Server Components using async/await directly
 - Use `fetch()` with Next.js cache options (`{ cache: 'no-store' }` or `{ next: { revalidate: N } }`)
@@ -260,7 +299,7 @@ aws lambda update-function-code \
 - File-based routing only — no manual route config
 
 ### Imports
-- Use `@/` alias for all imports from the project root
+- Use `@/` alias for all imports from the src root
 - Example: `import Button from '@/components/ui/Button'`
 - Never use relative imports that traverse up more than one level
 
@@ -276,7 +315,7 @@ aws lambda update-function-code \
 - Use `next/font` — never import fonts via `<link>` in layout
 
 ### Metadata
-- Use the `export const metadata` API in `layout.tsx` or `page.tsx`
+- Use the `export const metadata` API in `layout.js` or `page.js`
 - Never use `next/head`
 
 ### Environment Variables
@@ -285,9 +324,10 @@ aws lambda update-function-code \
 - Access via `process.env.VARIABLE_NAME` — never hardcode values
 
 ### API Communication
-- All API calls go to Django backend at `process.env.NEXT_PUBLIC_API_URL`
-- JWT token stored in httpOnly cookie — never localStorage
-- Use Server Actions or Route Handlers (`/app/api/`) for server-side API proxying when needed
+- All API calls go through `src/lib/api.js` — never call fetch directly in components
+- Django backend at `process.env.NEXT_PUBLIC_API_URL`
+- JWT stored in httpOnly cookie — never localStorage
+- Always pass `credentials: 'include'` — handled by `api.js`
 
 ---
 
@@ -295,8 +335,8 @@ aws lambda update-function-code \
 
 ### Version & Style
 - Django 5.x + Django REST Framework
-- Function-based views with DRF `@api_view` decorator preferred for simple endpoints
-- Class-based views (`APIView`, `ModelViewSet`) for CRUD-heavy resources
+- Class-based views (`APIView`, `ModelViewSet`) preferred throughout for consistency
+- Function-based views (`@api_view`) only for one-off utility endpoints like health checks
 
 ### Auth
 - `djangorestframework-simplejwt` for JWT tokens
