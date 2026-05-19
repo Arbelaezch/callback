@@ -17,14 +17,12 @@ export function middleware(request) {
   // Unauthenticated user hitting a protected route → login
   if (!accessToken && !isPublic) {
     const loginUrl = new URL('/login', request.url);
-    loginUrl.searchParams.set('next', pathname);
+    // Only pass relative paths — prevents open redirect attacks
+    if (pathname.startsWith('/')) {
+      loginUrl.searchParams.set('next', pathname);
+    }
     return NextResponse.redirect(loginUrl);
   }
-
-    const next = searchParams.get('next') || '/dashboard';
-    // Only allow relative paths
-    const redirectTo = next.startsWith('/') ? next : '/dashboard';
-    router.push(redirectTo);
 
   // Authenticated user hitting auth pages → dashboard
   if (accessToken && isPublic) {
