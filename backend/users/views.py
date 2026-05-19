@@ -27,7 +27,7 @@ def set_auth_cookies(response, access_token, refresh_token):
         str(refresh_token),
         max_age=settings.AUTH_COOKIE_MAX_AGE,
         httponly=True,
-        secure=True,
+        secure=not settings.DEBUG,
         samesite='Lax',
     )
 
