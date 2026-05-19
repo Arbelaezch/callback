@@ -9,15 +9,17 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL;
  * same wrapper to /api/auth/social/ — no changes needed here.
  */
 async function request(path, options = {}) {
-    const { headers: extraHeaders, ...restOptions } = options;
-    const res = await fetch(`${API_URL}${path}`, {
-      ...restOptions,
-      headers: {
-        'Content-Type': 'application/json',
-        ...extraHeaders,
-      },
-      credentials: 'include',
-    });
+  const { headers: extraHeaders, ...restOptions } = options;
+  const isFormData = restOptions.body instanceof FormData;
+
+  const res = await fetch(`${API_URL}${path}`, {
+    ...restOptions,
+    headers: {
+      ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
+      ...extraHeaders,
+    },
+    credentials: 'include',
+  });
 
   if (!res.ok) {
     const error = await res.json().catch(() => ({ detail: 'An error occurred.' }));
@@ -35,4 +37,10 @@ export const api = {
   post: (path, body) => request(path, { method: 'POST', body: JSON.stringify(body) }),
   patch: (path, body) => request(path, { method: 'PATCH', body: JSON.stringify(body) }),
   delete: (path) => request(path, { method: 'DELETE' }),
+  multipart: (path, formData) =>
+    request(path, {
+      method: 'POST',
+      body: formData,
+      // Content-Type omitted — browser sets multipart boundary automatically
+    }),
 };
