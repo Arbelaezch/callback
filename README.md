@@ -19,7 +19,7 @@ AI-powered job application agent. Runs daily per user — fetches jobs, scores r
 | Job discovery | JSearch API (RapidAPI) |
 | LLM | Anthropic API (claude-sonnet-4-6) |
 | File storage | AWS S3 |
-| Email | Resend |
+| Email | Django SMTP (→ AWS SES later) |
 | Error tracking | Sentry |
 | Uptime | UptimeRobot |
 | Reverse proxy | Nginx (host) |
@@ -59,27 +59,49 @@ S3
 ## Env Vars
 
 ```bash
+# Django
 SECRET_KEY=
 DEBUG=
 ALLOWED_HOSTS=
-DATABASE_URL=
 
+# Database
+POSTGRES_DB=
+POSTGRES_USER=
+POSTGRES_PASSWORD=
+DATABASE_URL=                        # prod only
+
+# Redis / Celery
+REDIS_PASSWORD=
+CELERY_BROKER_URL=redis://:password@redis:6379/0
+CELERY_RESULT_BACKEND=redis://:password@redis:6379/0
+
+# AWS
 AWS_ACCESS_KEY_ID=
 AWS_SECRET_ACCESS_KEY=
 AWS_S3_BUCKET=
 AWS_LAMBDA_FUNCTION_NAME=
 AWS_REGION=
 
+# APIs
 ANTHROPIC_API_KEY=
 JSEARCH_API_KEY=
-RESEND_API_KEY=
+
+# Email
+EMAIL_HOST=
+EMAIL_PORT=
+EMAIL_USE_TLS=
+EMAIL_HOST_USER=
+EMAIL_HOST_PASSWORD=
+
+# Monitoring
+SENTRY_DSN=
+
+# Stripe (post-MVP)
 STRIPE_SECRET_KEY=
 STRIPE_WEBHOOK_SECRET=
 
-SENTRY_DSN=
-
-CELERY_BROKER_URL=redis://redis:6379/0
-CELERY_RESULT_BACKEND=redis://redis:6379/0
+# Next.js
+NEXT_PUBLIC_API_URL=http://localhost:8000
 ```
 
 ---
@@ -95,16 +117,19 @@ CELERY_RESULT_BACKEND=redis://redis:6379/0
 /backend
   /callback
     /api             # DRF endpoints
-    /models          # User, Preferences, Resume, Application, JobSeen
     /tasks
       scan_jobs.py   # JSearch fetch + dedup
       score_jobs.py  # LLM scoring
       apply_job.py   # ATS detection + Lambda dispatch
-      send_digest.py # Resend daily email
+      send_digest.py # daily digest email
     /llm             # Prompt templates + Anthropic client
     /ats             # Greenhouse + Lever API clients
     /jsearch         # JSearch client
     /storage         # S3 helpers
+  /users
+    models.py        # CustomUser, Resume, CoverLetterTemplate
+  /jobs
+    models.py        # JobSearch, JobSeen, Application, DailyRunLog
 
 /lambda
   handler.py         # Browser Use submission
@@ -118,17 +143,17 @@ CELERY_RESULT_BACKEND=redis://redis:6379/0
 
 ```
 Celery beat cron (daily, per active user)
-  → JSearch: fetch jobs by role_titles + cities + remote_pref
+  → JSearch: fetch jobs by role_titles + cities + location_types
   → Postgres: dedup against jobs_seen
   → LLM: score each new job (1-10) vs user profile
-  → Select top N (default 5)
+  → Select top N (default 5, up to daily_limit)
   → Per job:
       → Greenhouse URL → Greenhouse API
       → Lever URL     → Lever API
       → Other         → invoke Lambda (Browser Use)
       → LLM: personalize cover letter
       → Write to applications table
-  → Resend: daily digest email
+  → Django SMTP: daily digest email
 ```
 
 ---
@@ -186,18 +211,24 @@ aws lambda update-function-code \
 
 ## Database
 
-```sql
-users                    -- Django auth
-user_preferences         -- role_titles[], cities[], remote_pref, active, daily_limit
-resumes                  -- s3_key, uploaded_at, user_id
-cover_letter_templates   -- body, user_id
-jobs_seen                -- job_id, user_id, seen_at
-applications             -- job_id, user_id, company, role_title, status,
-                         --   submission_method, applied_at, cover_letter_used,
-                         --   lambda_invocation_id, failure_reason
+```
+users (CustomUser)       -- extends AbstractUser, created_at/updated_at
+resumes                  -- s3_key, filename, is_default, user_id
+cover_letter_templates   -- label, body, is_default, user_id
+job_searches             -- role_titles[], cities[], location_types[], seniority_levels[],
+                         --   years_experience, salary_min, excluded_companies[],
+                         --   resume, cover_letter_template, daily_limit, active
+jobs_seen                -- job_search_id, job_id, seen_at
+applications             -- job_search_id, resume_id, job_id, job_url, company, role_title,
+                         --   status, submission_method, llm_score, llm_score_reason,
+                         --   cover_letter_used, lambda_invocation_id, failure_reason,
+                         --   applied_at, created_at
+daily_run_logs           -- job_search_id, run_at, jobs_fetched, jobs_scored,
+                         --   jobs_applied, jobs_failed, jobs_skipped, status, error
 ```
 
-`status`: `pending` `submitted` `failed` `skipped`
+`status` (application): `pending` `submitted` `failed` `skipped`
+`status` (daily_run_log): `running` `completed` `partial` `failed`
 `submission_method`: `greenhouse_api` `lever_api` `browser_lambda`
 
 ---
@@ -207,7 +238,7 @@ applications             -- job_id, user_id, company, role_title, status,
 **Sentry** — add to `settings.py`:
 ```python
 import sentry_sdk
-sentry_sdk.init(dsn=env("SENTRY_DSN"), traces_sample_rate=0.2)
+sentry_sdk.init(dsn=os.environ['SENTRY_DSN'], traces_sample_rate=0.2)
 ```
 
 **UptimeRobot** — monitor:
@@ -251,9 +282,9 @@ Failures logged + surfaced in digest. User handles manually.
 ## Roadmap
 
 **MVP**
-- [ ] Django + Next.js, Dockerized
+- [x] Django + Next.js, Dockerized
+- [x] Models + migrations
 - [ ] Nginx host config
-- [ ] Models + migrations
 - [ ] Auth (simplejwt)
 - [ ] Onboarding + file upload → S3
 - [ ] Celery beat cron
@@ -263,7 +294,7 @@ Failures logged + surfaced in digest. User handles manually.
 - [ ] Lambda (Browser Use) + deploy script
 - [ ] Cover letter personalization
 - [ ] Fan-out Lambda dispatch
-- [ ] Digest email (Resend)
+- [ ] Digest email (Django SMTP)
 - [ ] Dashboard
 - [ ] Sentry + UptimeRobot
 - [ ] pg_dump → S3 cron
@@ -285,7 +316,6 @@ Failures logged + surfaced in digest. User handles manually.
 | Anthropic | — | <$0.01/application |
 | AWS Lambda | 1M invocations/mo | Negligible |
 | AWS S3 | 5GB free | Pennies |
-| Resend | 3k emails/mo | $20/mo |
 | Sentry | 5k errors/mo | Free at MVP |
 | UptimeRobot | 50 monitors | Free |
 | Stripe | No monthly fee | 2.9% + $0.30/txn |
