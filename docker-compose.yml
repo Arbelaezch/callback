@@ -92,8 +92,6 @@ services:
     command: npm run dev
     volumes:
       - ./frontend:/app
-      - /app/node_modules    # anonymous volume so container node_modules isn't overwritten
-      - /app/.next
     ports:
       - "3000:3000"
     env_file:
