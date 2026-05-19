@@ -13,10 +13,18 @@ class CustomUser(AbstractUser):
 
 
 class Resume(models.Model):
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('ready', 'Ready'),
+        ('failed', 'Failed'),
+        ('deleted', 'Deleted'),
+    ]
+
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='resumes')
     s3_key = models.CharField(max_length=500)
     filename = models.CharField(max_length=255)
     is_default = models.BooleanField(default=False)
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='pending')
     uploaded_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

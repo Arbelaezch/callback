@@ -103,6 +103,7 @@ class Application(models.Model):
         ('pending', 'Pending'),
         ('submitted', 'Submitted'),
         ('failed', 'Failed'),
+        ('deleted', 'Deleted'),
         ('skipped', 'Skipped'),
     ]
 
