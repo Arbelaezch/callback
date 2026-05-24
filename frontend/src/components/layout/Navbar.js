@@ -11,9 +11,8 @@ import { useAuth } from '@/contexts/AuthContext';
  *   - Unauthenticated: app name + Login button
  *   - Authenticated:   app name + username + Profile link + Logout button
  *
- * Intentionally lightweight — no global auth context yet.
- * Fetches /api/auth/me/ on mount to determine state.
- * Replace with a context/SWR hook when the app grows.
+ * Reads auth state from AuthContext via useAuth().
+ * Redirects to /login after logout.
  */
 export default function Navbar() {
   const router = useRouter();
