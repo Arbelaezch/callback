@@ -5,10 +5,22 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL;
  * Core fetch wrapper. All API calls go through here.
  * Credentials: 'include' ensures cookies are sent with every request.
  *
+ * On 401, attempts a token refresh and retries the original request once.
+ * Auth mutation routes are excluded from the refresh attempt since a 401
+ * there is a genuine auth failure, not an expired token.
+ *
  * SOCIAL AUTH SCAFFOLD:
  * When adding social providers, pass provider tokens through this
  * same wrapper to /api/auth/social/ — no changes needed here.
  */
+
+const AUTH_NO_REFRESH = [
+  '/api/auth/login/',
+  '/api/auth/logout/',
+  '/api/auth/register/',
+  '/api/auth/token/refresh/',
+];
+
 async function request(path, options = {}) {
   const { headers: extraHeaders, ...restOptions } = options;
   const isFormData = restOptions.body instanceof FormData;
@@ -24,11 +36,12 @@ async function request(path, options = {}) {
 
   // Token expired — try to refresh once then retry
   if (res.status === 401) {
-    if (path.startsWith('/api/auth/')) {
+    if (AUTH_NO_REFRESH.includes(path)) {
       const error = await res.json().catch(() => ({ detail: 'An error occurred.' }));
       throw { status: res.status, ...error };
     }
 
+    // Token expired — try to refresh once then retry
     const refreshed = await fetch(`${API_URL}/api/auth/token/refresh/`, {
       method: 'POST',
       credentials: 'include',
