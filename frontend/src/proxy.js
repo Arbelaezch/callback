@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 
-const PUBLIC_PATHS = ['/login', '/register'];
+// const PUBLIC_PATHS = ['/login', '/register'];
+const PUBLIC_PATHS = ['/login', '/onboarding'];
+
 
 // PASSWORD RESET SCAFFOLD:
 // Add '/forgot-password', '/reset-password' to PUBLIC_PATHS
@@ -8,8 +10,9 @@ const PUBLIC_PATHS = ['/login', '/register'];
 // SOCIAL AUTH SCAFFOLD:
 // Add '/auth/callback' to PUBLIC_PATHS for OAuth redirect handling
 
-export function middleware(request) {
+export function proxy(request) {
   const { pathname } = request.nextUrl;
+  console.log('[Proxy] pathname=', pathname);
   const accessToken = request.cookies.get('access_token')?.value;
 
   const isPublic = PUBLIC_PATHS.some((path) => pathname.startsWith(path));
@@ -40,6 +43,6 @@ export const config = {
      * - favicon.ico
      * - api routes (handled by Django)
      */
-    '/((?!_next/static|_next/image|favicon.ico).*)',
+    '/((?!_next/static|_next/image|favicon.ico|api/).*)',
   ],
 };
