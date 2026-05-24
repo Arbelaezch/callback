@@ -13,7 +13,7 @@ import { apiClient } from '@/lib/apiClient';
  */
 export default function DashboardPage() {
   const router = useRouter();
-  const { user, loading: loadingUser } = useAuth();
+  const { user } = useAuth();
 
   const [searches, setSearches] = useState([]);
   const [applications, setApplications] = useState([]);
@@ -50,10 +50,6 @@ export default function DashboardPage() {
     } catch (err) {
       console.error('[Dashboard] toggle error', err);
     }
-  }
-
-  if (loadingUser) {
-    return <div className="p-8 text-muted-foreground text-sm">Checking auth...</div>;
   }
 
   return (
