@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
-import { getMe, logout } from '@/lib/auth';
+import { useAuth } from '@/contexts/AuthContext';
 
 /**
  * Navbar — shown on all authenticated pages via layout.
@@ -17,23 +17,7 @@ import { getMe, logout } from '@/lib/auth';
  */
 export default function Navbar() {
   const router = useRouter();
-  const pathname = usePathname();
-  const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    console.debug('[Navbar] fetching current user');
-    getMe()
-      .then((data) => {
-        console.debug('[Navbar] user=%s', data?.username);
-        setUser(data);
-      })
-      .catch((err) => {
-        console.debug('[Navbar] not authenticated err=%o', err);
-        setUser(null);
-      })
-      .finally(() => setLoading(false));
-  }, [pathname]); // re-check on route change so logout/login reflects immediately
+  const { user, loading, logout } = useAuth();
 
   async function handleLogout() {
     console.debug('[Navbar] logging out');
@@ -42,7 +26,6 @@ export default function Navbar() {
     } catch (err) {
       console.error('[Navbar] logout error', err);
     }
-    setUser(null);
     router.push('/login');
   }
 

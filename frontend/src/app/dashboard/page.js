@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { getMe } from '@/lib/auth';
+import { useAuth } from '@/contexts/AuthContext';
 import { apiClient } from '@/lib/apiClient';
 
 /**
@@ -13,29 +13,12 @@ import { apiClient } from '@/lib/apiClient';
  */
 export default function DashboardPage() {
   const router = useRouter();
+  const { user, loading: loadingUser } = useAuth();
 
-  const [user, setUser] = useState(null);
   const [searches, setSearches] = useState([]);
   const [applications, setApplications] = useState([]);
-  const [loadingUser, setLoadingUser] = useState(true);
   const [loadingData, setLoadingData] = useState(true);
   const [error, setError] = useState(null);
-
-  // --- auth check + user fetch ---
-  useEffect(() => {
-    console.debug('[Dashboard] API_URL=', process.env.NEXT_PUBLIC_API_URL);
-    console.debug('[Dashboard] fetching user');
-    getMe()
-      .then((data) => {
-        console.debug('[Dashboard] user=%o', data);
-        setUser(data);
-      })
-      .catch((err) => {
-        console.error('[Dashboard] not authenticated, redirecting', err);
-        router.push('/login');
-      })
-      .finally(() => setLoadingUser(false));
-  }, [router]);
 
   // --- data fetch ---
   useEffect(() => {
