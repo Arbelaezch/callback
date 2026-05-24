@@ -73,18 +73,22 @@ S3
         /register        # register page
       /dashboard         # history, pause/resume, preferences
       /onboarding        # profile setup, file upload
-      layout.js          # root layout
+      layout.js          # root layout — wraps app in AuthProvider
       page.js            # redirects to /dashboard
     /components
+      /layout
+        Navbar.js        # auth-aware nav — reads from AuthContext
       /ui
         TagInput.js      # tag/chip input for arrays
+    /contexts
+      AuthContext.js     # AuthProvider + useAuth hook — single source of truth for auth state
     /hooks
       /onboarding
         useChoices.js    # fetches + caches job choice fields from API
     /lib
       apiClient.js       # fetch wrapper — all API calls go through here
       auth.js            # auth helpers (login, logout, register, getMe)
-    middleware.js        # route protection — redirects unauthenticated users
+    proxy.js             # route protection — redirects unauthenticated users
 
 /backend
   /callback
@@ -197,6 +201,11 @@ JWT via `djangorestframework-simplejwt`. Tokens stored in httpOnly cookies — n
 - All endpoints require `IsAuthenticated` unless explicitly decorated with `@permission_classes([AllowAny])`
 - `secure=not DEBUG` on cookies — works over HTTP in dev, HTTPS only in prod
 - Open redirect protection on the `next` param in middleware and login page — only relative paths accepted
+- Token refresh handled silently in `apiClient.js` — on 401, attempts 
+  `POST /api/auth/token/refresh/` then retries the original request once
+- Auth endpoints (`/api/auth/*`) skip the refresh flow and throw immediately
+- `AuthContext.js` is the single source of truth for user state — 
+  components read via `useAuth()`, never call `getMe()` directly
 
 Scaffolded for future social auth at `/api/auth/social/` and password reset/email verification endpoints.
 
@@ -353,6 +362,13 @@ aws lambda update-function-code \
 - JWT stored in httpOnly cookie — never localStorage
 - Always pass `credentials: 'include'` — handled by `apiClient.js`
 
+### API Proxy
+- All `/api/*` requests are proxied to `INTERNAL_API_URL` (Django) via rewrites in `next.config.mjs`
+- Browser always talks to `localhost:3000` — never directly to Django in dev
+- `NEXT_PUBLIC_API_URL` must be `http://localhost:3000` in dev
+- `INTERNAL_API_URL=http://backend:8000` is server-side only (not `NEXT_PUBLIC_`)
+- In prod, Nginx handles this routing — Next.js rewrites are dev-only
+
 ### Module Interfaces
 
 #### `src/lib/apiClient.js` — HTTP client
@@ -376,6 +392,15 @@ aws lambda update-function-code \
 - `useChoices()` → `{ choices, loading, error }`
 - Fetches `/api/jobs/choices/` once and caches in module scope
 - `choices` shape: `location_types`, `seniority_levels`, `application_statuses`, `submission_methods`, `remote_types` — each an array of `{ value, label }`
+
+#### `src/contexts/AuthContext.js` — auth state
+- `AuthProvider` — wraps the app in `layout.js`; fetches `getMe()` once on mount
+- `useAuth()` → `{ user, loading, refresh, logout }`
+  - `user` — current user object or `null`
+  - `loading` — true until first `getMe()` resolves
+  - `refresh()` — re-fetches current user (call after login/register)
+  - `logout()` — calls `auth.logout()` and clears user state
+- Never call `getMe()` directly in components — use `useAuth()` instead
 
 ---
 

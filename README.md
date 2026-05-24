@@ -101,7 +101,8 @@ STRIPE_SECRET_KEY=
 STRIPE_WEBHOOK_SECRET=
 
 # Next.js
-NEXT_PUBLIC_API_URL=http://localhost:8000
+NEXT_PUBLIC_API_URL=http://localhost:3000   # browser-facing — always points to Next.js
+INTERNAL_API_URL=http://backend:8000        # server-side only — Next.js → Django inside Docker
 ```
 
 ---
