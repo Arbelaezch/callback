@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { api } from '@/lib/api';
+import { apiClient } from '@/lib/apiClient';
 
 let cache = null;
 
@@ -24,7 +24,7 @@ export function useChoices() {
   useEffect(() => {
     if (cache) return;
 
-    api.get('/api/jobs/choices/')
+    apiClient.get('/api/jobs/choices/')
       .then((data) => {
         cache = data;
         setChoices(data);

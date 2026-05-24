@@ -1,4 +1,4 @@
-import { api } from './api';
+import { apiClient } from './apiClient';
 
 /**
  * Auth helpers. The rest of the app doesn't care how auth works —
@@ -11,35 +11,35 @@ import { api } from './api';
  */
 
 export async function register({ username, email, password }) {
-  return api.post('/api/auth/register/', { username, email, password });
+  return apiClient.post('/api/auth/register/', { username, email, password });
 }
 
 export async function login({ username, password }) {
-  return api.post('/api/auth/login/', { username, password });
+  return apiClient.post('/api/auth/login/', { username, password });
 
   // SOCIAL AUTH SCAFFOLD:
   // if (provider) {
-  //   return api.post('/api/auth/social/', { provider, token });
+  //   return apiClient.post('/api/auth/social/', { provider, token });
   // }
 }
 
 export async function logout() {
-  return api.post('/api/auth/logout/', {});
+  return apiClient.post('/api/auth/logout/', {});
 }
 
 export async function getMe() {
-  return api.get('/api/auth/me/');
+  return apiClient.get('/api/auth/me/');
 }
 
 // PASSWORD RESET SCAFFOLD:
 // export async function requestPasswordReset(email) {
-//   return api.post('/api/auth/password/reset/', { email });
+//   return apiClient.post('/api/auth/password/reset/', { email });
 // }
 // export async function confirmPasswordReset({ token, password }) {
-//   return api.post('/api/auth/password/reset/confirm/', { token, password });
+//   return apiClient.post('/api/auth/password/reset/confirm/', { token, password });
 // }
 
 // EMAIL VERIFICATION SCAFFOLD:
 // export async function verifyEmail(token) {
-//   return api.post('/api/auth/email/verify/confirm/', { token });
+//   return apiClient.post('/api/auth/email/verify/confirm/', { token });
 // }

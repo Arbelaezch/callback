@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { api } from '@/lib/api';
+import { apiClient } from '@/lib/apiClient';
 import { useChoices } from '@/hooks/onboarding/useChoices';
 import TagInput from '@/components/ui/TagInput';
 
@@ -82,7 +82,7 @@ export default function OnboardingPage() {
       if (salaryMin) formData.append('salary_min', salaryMin);
       excludedCompanies.forEach((c) => formData.append('excluded_companies', c));
 
-      await api.multipart('/api/onboarding/', formData);
+      await apiClient.multipart('/api/onboarding/', formData);
       router.push('/dashboard');
     } catch (err) {
       setError(err.detail || 'Something went wrong. Please try again.');
