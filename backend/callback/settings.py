@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 from pathlib import Path
 
 from callback.db_config import get_database_config
+from callback import config
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -18,7 +19,7 @@ SECRET_KEY = os.environ['SECRET_KEY']
 DEBUG = os.environ.get('DEBUG', 'True') == 'True'
 
 ALLOWED_HOSTS = (
-    ['localhost', '127.0.0.1']
+    ['localhost', '127.0.0.1', 'backend']
     if DEBUG
     else [h.strip() for h in os.environ['ALLOWED_HOSTS'].split(',')]
 )
@@ -105,7 +106,7 @@ REST_FRAMEWORK = {
         'rest_framework.permissions.IsAuthenticated',
     ),
 }
- 
+
 # -----------------------------------------------------------------
 # Simple JWT
 # -----------------------------------------------------------------
@@ -116,9 +117,6 @@ SIMPLE_JWT = {
     'BLACKLIST_AFTER_ROTATION': True,
     'AUTH_HEADER_TYPES': ('Bearer',),
 }
-
-# Cookie config
-AUTH_COOKIE_MAX_AGE = 60 * 60 * 24 * 7  # 7 days
 
 # -----------------------------------------------------------------
 # Internationalisation
@@ -141,6 +139,8 @@ CELERY_BROKER_URL = os.environ['CELERY_BROKER_URL']
 CELERY_RESULT_BACKEND = os.environ['CELERY_RESULT_BACKEND']
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
+CELERY_TIMEZONE = config.CELERY_TIMEZONE
+CELERY_BEAT_SCHEDULE = config.CELERY_BEAT_SCHEDULE
 
 # -----------------------------------------------------------------
 # CORS
@@ -164,4 +164,6 @@ if not DEBUG:
 # -----------------------------------------------------------------
 # App settings
 # -----------------------------------------------------------------
-LLM_SCORE_THRESHOLD = 7
+LLM_SCORE_THRESHOLD = config.LLM_SCORE_THRESHOLD
+AUTH_COOKIE_MAX_AGE = config.AUTH_COOKIE_MAX_AGE
+AUTH_COOKIE_MAX_AGE = AUTH_COOKIE_MAX_AGE
