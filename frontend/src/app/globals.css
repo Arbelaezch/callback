@@ -1,0 +1,64 @@
+@import "tailwindcss";
+
+@theme {
+  --color-background: #111111;
+  --color-foreground: #ededed;
+
+  --color-card: #1a1a1a;
+  --color-card-foreground: #ededed;
+
+  --color-muted: #212121;
+  --color-muted-foreground: #8c8c8c;
+
+  --color-border: #2e2e2e;
+  --color-input: #2e2e2e;
+  --color-ring: #6366f1;
+
+  --color-primary: #6366f1;
+  --color-primary-foreground: #ffffff;
+
+  --color-secondary: #212121;
+  --color-secondary-foreground: #ededed;
+
+  --color-destructive: #e53e3e;
+  --color-destructive-foreground: #ffffff;
+
+  --color-accent: #212121;
+  --color-accent-foreground: #ededed;
+
+  --border-radius-md: 0.5rem;
+  --border-radius-lg: 0.75rem;
+}
+
+@layer base {
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: var(--color-background);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-border);
+    border-radius: 4px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #4a4a4a;
+  }
+
+  input:-webkit-autofill,
+  input:-webkit-autofill:hover,
+  input:-webkit-autofill:focus {
+    -webkit-box-shadow: 0 0 0px 1000px var(--color-card) inset;
+    -webkit-text-fill-color: var(--color-foreground);
+    caret-color: var(--color-foreground);
+    transition: background-color 5000s ease-in-out 0s;
+  }
+}
