@@ -24,6 +24,11 @@ async function request(path, options = {}) {
 
   // Token expired — try to refresh once then retry
   if (res.status === 401) {
+    if (path.startsWith('/api/auth/')) {
+      const error = await res.json().catch(() => ({ detail: 'An error occurred.' }));
+      throw { status: res.status, ...error };
+    }
+
     const refreshed = await fetch(`${API_URL}/api/auth/token/refresh/`, {
       method: 'POST',
       credentials: 'include',
