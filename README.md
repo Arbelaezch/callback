@@ -130,22 +130,30 @@ INTERNAL_API_URL=http://backend:8000        # server-side only — Next.js → D
       apiClient.js       # fetch wrapper — all API calls go through here
       auth.js            # auth helpers (login, logout, register, getMe)
     middleware.js        # route protection — redirects unauthenticated users
-
+ 
 /backend
   /callback
-    /tasks
-      scan_jobs.py       # JSearch fetch + dedup
-      score_jobs.py      # LLM scoring
-      apply_job.py       # ATS detection + Lambda dispatch
-      send_digest.py     # daily digest email
-    /llm                 # prompt templates + Anthropic client
-    /ats                 # Greenhouse + Lever API clients
-    /jsearch             # JSearch client
+    config.py            # non-secret constants (LLM model, timeouts, beat schedule, thresholds)
+    celery.py            # Celery app setup
     db_config.py         # database config logic (dev vs prod)
     health.py            # /api/health/ endpoint
-    settings.py          # Django settings — reads from .env via python-dotenv
-    storage.py           # S3 helpers (upload, delete) — dev stub, prod S3
+    settings.py          # Django settings — env vars + imports from config.py
+    storage.py           # S3 helpers — dev stub, prod S3
     urls.py              # root URL config
+    /tasks
+      daily_run.py       # orchestrator Celery task
+      scan_jobs.py       # JSearch fetch + dedup
+      score_jobs.py      # LLM scoring + ranking
+      apply_job.py       # ATS detection + Lambda dispatch (not yet implemented)
+      send_digest.py     # daily digest email (not yet implemented)
+    /llm
+      __init__.py        # exports score_job, personalize_cover_letter
+      client.py          # Anthropic SDK wrapper
+    /jsearch
+      client.py          # JSearch API wrapper — pluggable query strategies
+    /ats
+      greenhouse.py      # Greenhouse API client (not yet implemented)
+      lever.py           # Lever API client (not yet implemented)
   /users
     admin.py
     authentication.py    # CookieJWTAuthentication backend
@@ -157,7 +165,7 @@ INTERNAL_API_URL=http://backend:8000        # server-side only — Next.js → D
     models.py            # JobSearch, JobSeen, Application, DailyRunLog
     views.py             # ChoicesView
     urls.py              # /api/jobs/choices/
-
+ 
 /lambda
   handler.py             # Browser Use submission
   requirements.txt
@@ -194,26 +202,52 @@ INTERNAL_API_URL=http://backend:8000        # server-side only — Next.js → D
 
 ### Backend
 
+#### `callback/config.py` — application constants
+Non-secret hardcoded constants. Import directly: `from callback.config import LLM_MODEL`.
+ 
+- `LLM_MODEL`, `LLM_MAX_TOKENS`, `LLM_TIMEOUT_SECONDS`
+- `LLM_SCORE_THRESHOLD` — minimum score to pass a job to the apply stage
+- `JSEARCH_HOST`, `JSEARCH_TIMEOUT_SECONDS`, `JSEARCH_PAGE_SIZE`
+- `AUTH_COOKIE_MAX_AGE` — must match `SIMPLE_JWT.REFRESH_TOKEN_LIFETIME`
+- `CELERY_TIMEZONE`, `CELERY_BEAT_SCHEDULE`
+
 #### `callback/storage.py`
 - `upload_resume(file, user_id: int) -> str` — returns S3 key
 - `delete_resume(s3_key: str) -> None`
-- In dev (`DEBUG=True`): writes to `/tmp/`, returns a real key — callers behave identically in dev and prod
-- In prod: real S3 calls — scaffold in place, activate by uncommenting boto3 block
+- Dev: writes to `/tmp/`. Prod: real S3. Callers behave identically in both environments.
 - Daily loop tasks must filter `resume__status='ready'` — storage does not enforce this
 
-#### `callback/llm/` — Anthropic client
-- `score_job(job, profile) -> { score: int, reason: str }`
-- `personalize_cover_letter(template, job) -> str`
-- Wraps Anthropic SDK — callers never import the SDK directly
-- Returns parsed dicts/strings, not raw API responses
+#### `callback/llm/`
+Import via `from callback.llm import score_job, personalize_cover_letter`. Never import `anthropic` outside this package.
+ 
+- `score_job(job: dict, profile: dict) -> dict`
+  Returns `{ "score": int (1–10), "reason": str }`
+- `personalize_cover_letter(template: str, job: dict) -> str`
+  Returns full personalised cover letter text
 
-#### `callback/jsearch/client.py` — JSearch client
-- `fetch_jobs(role_titles, cities, location_types) -> list[dict]`
-- Wraps RapidAPI JSearch — callers never call RapidAPI directly
+#### `callback/jsearch/client.py`
+- `fetch_jobs(role_titles, cities, location_types, strategy='combined') -> list[dict]`
+  - Never raises on API error — returns `[]` and logs
+  - Normalised job keys: `job_id`, `title`, `company`, `description`, `job_url`, `location`, `remote_type`, `salary_range`, `apply_link`
+  - Strategies: `'combined'` (default). Add new strategies to `_STRATEGIES` dict — see module docstring.
 
-#### `callback/ats/greenhouse.py` + `lever.py` — ATS clients
+#### `callback/tasks/scan_jobs.py`
+- `scan_jobs(job_search_id: int, strategy: str = 'combined') -> list[dict]`
+  Fetches, deduplicates, writes `JobSeen` records, returns unseen jobs. Idempotent.
+
+#### `callback/tasks/score_jobs.py`
+- `score_jobs(job_search_id: int, unseen_jobs: list[dict]) -> list[dict]`
+  Scores via LLM, filters by threshold, sorts descending, caps at `daily_limit`.
+  Scoring failures flagged with `_score_failed: True` — appended after candidates.
+
+#### `callback/tasks/daily_run.py`
+- `daily_run(job_search_id: int | None = None)` — Celery task
+  Pass a `job_search_id` to run one search manually; omit to run all active searches.
+  Creates and updates a `DailyRunLog` per search. Per-search failures are isolated.
+
+#### `callback/ats/greenhouse.py` + `lever.py`
+*(Not yet implemented)*
 - `submit(application) -> { success: bool, method: str }`
-- ATS detection logic lives in `tasks/apply_job.py`, not in these clients
 
 ---
 

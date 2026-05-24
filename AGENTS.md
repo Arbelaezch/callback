@@ -74,6 +74,7 @@ S3
       /dashboard         # history, pause/resume, preferences
       /onboarding        # profile setup, file upload
       layout.js          # root layout — wraps app in AuthProvider
+      globals.css        # global styles
       page.js            # redirects to /dashboard
     /components
       /layout
@@ -92,19 +93,29 @@ S3
 
 /backend
   /callback
-    /tasks
-      scan_jobs.py       # JSearch fetch + dedup
-      score_jobs.py      # LLM scoring
-      apply_job.py       # ATS detection + Lambda dispatch
-      send_digest.py     # daily digest email
-    /llm                 # prompt templates + Anthropic client
-    /ats                 # Greenhouse + Lever API clients
-    /jsearch             # JSearch client
+    config.py            # non-secret constants (LLM model, timeouts, beat schedule, thresholds)
+    celery.py            # Celery app — autodiscovers tasks, reads config from Django settings
     db_config.py         # database config logic (dev vs prod)
     health.py            # /api/health/ endpoint
-    settings.py          # Django settings — reads from .env via python-dotenv
+    settings.py          # Django settings — reads from .env via python-dotenv; imports constants from config.py
     storage.py           # S3 helpers (upload, delete) — dev stub, prod S3
     urls.py              # root URL config
+    /tasks
+      __init__.py
+      daily_run.py       # orchestrator Celery task — scan → score → apply (stub) → log
+      scan_jobs.py       # JSearch fetch + dedup against jobs_seen
+      score_jobs.py      # LLM scoring, threshold filter, top-N selection
+      apply_job.py       # ATS detection + Lambda dispatch (not yet implemented)
+      send_digest.py     # daily digest email (not yet implemented)
+    /llm
+      __init__.py        # exports score_job, personalize_cover_letter
+      client.py          # Anthropic SDK wrapper — never imported directly by callers
+    /jsearch
+      __init__.py
+      client.py          # JSearch API wrapper — pluggable query strategies
+    /ats
+      greenhouse.py      # Greenhouse API client (not yet implemented)
+      lever.py           # Lever API client (not yet implemented)
   /users
     admin.py
     authentication.py    # CookieJWTAuthentication backend
@@ -295,6 +306,23 @@ aws lambda update-function-code \
 
 ---
 
+## Settings
+
+Non-secret constants (LLM model, timeouts, score threshold, beat schedule) live in `callback/config.py`
+and are imported into `settings.py` via `from callback import config`. This keeps `settings.py`
+env-only and makes constants safe to commit.
+
+Rule of thumb:
+
+- Value comes from the environment → `settings.py` via `os.environ`
+- Value is a hardcoded constant → `config.py`
+- Value is a secret → `.env` only, never committed
+Application code that needs a constant imports directly from `callback.config`, not from
+`django.conf.settings`, unless Django itself requires the value to be on the settings module
+(e.g. Celery beat schedule, which is read via `config_from_object`).
+
+---
+
 ## Frontend — Next.js
 
 ### Version & Router
@@ -442,24 +470,84 @@ aws lambda update-function-code \
 
 ### Module Interfaces
 
-#### `callback/storage.py`
+### `callback/config.py` — application constants
+
+All hardcoded, non-secret configuration. Import directly in application code — do not
+read these via `django.conf.settings` unless Django requires it.
+
+Constants:
+
+- `LLM_MODEL` — Anthropic model string
+- `LLM_MAX_TOKENS` — max tokens for all LLM calls
+- `LLM_TIMEOUT_SECONDS` — Anthropic client timeout
+- `LLM_SCORE_THRESHOLD` — minimum score (inclusive) to pass a job to the apply stage
+- `JSEARCH_HOST` — RapidAPI host header value
+- `JSEARCH_TIMEOUT_SECONDS` — httpx timeout for JSearch calls
+- `JSEARCH_PAGE_SIZE` — results per JSearch API call (max 10)
+- `AUTH_COOKIE_MAX_AGE` — cookie max-age in seconds; must match `SIMPLE_JWT.REFRESH_TOKEN_LIFETIME`
+- `CELERY_TIMEZONE` — timezone for beat schedule; inherits Django `TIME_ZONE`
+- `CELERY_BEAT_SCHEDULE` — beat schedule dict; change fire time here
+
+### `callback/storage.py`
 - `upload_resume(file, user_id: int) -> str` — returns S3 key
 - `delete_resume(s3_key: str) -> None`
-- In dev (`DEBUG=True`): writes to `/tmp/`, returns a real key — callers behave identically in dev and prod
-- In prod: real S3 calls — scaffold in place, activate by uncommenting boto3 block
+- Dev (`DEBUG=True`): writes to `/tmp/`, returns a real key — callers behave identically in dev and prod
+- Prod: real S3 calls — scaffold in place, activate by uncommenting boto3 block
 - Daily loop tasks must filter `resume__status='ready'` — storage does not enforce this
 
-#### `callback/llm/` — Anthropic client
-- `score_job(job, profile) -> { score: int, reason: str }`
-- `personalize_cover_letter(template, job) -> str`
-- Wraps Anthropic SDK — callers never import the SDK directly
-- Returns parsed dicts/strings, not raw API responses
+### `callback/llm/`
+Import via `from callback.llm import score_job, personalize_cover_letter`.
+Never import `anthropic` directly outside this package.
 
-#### `callback/jsearch/client.py` — JSearch client
-- `fetch_jobs(role_titles, cities, location_types) -> list[dict]`
-- Wraps RapidAPI JSearch — callers never call RapidAPI directly
+- `score_job(job: dict, profile: dict) -> dict`
+  - `job` keys: `job_id`, `title`, `company`, `description`
+  - `profile` keys: `target_roles`, `seniority_levels`, `years_experience`, `location_types`, `experience_summary`
+  - Returns `{ "score": int (1–10), "reason": str }`
+  - Raises `ValueError` if LLM response is not valid JSON
+  - Re-raises `anthropic.*` exceptions on API error
 
-#### `callback/ats/greenhouse.py` + `lever.py` — ATS clients
+- `personalize_cover_letter(template: str, job: dict) -> str`
+  - `job` keys: `company`, `title`, `description`
+  - Returns full personalised cover letter text
+  - Re-raises `anthropic.*` exceptions on API error
+
+### `callback/jsearch/client.py`
+Import via `from callback.jsearch.client import fetch_jobs`.
+
+- `fetch_jobs(role_titles, cities, location_types, strategy='combined') -> list[dict]`
+  - Returns normalised job dicts, de-duplicated by `job_id` across all queries
+  - Never raises on API error — logs and returns empty list; caller decides what to do
+  - Normalised job dict keys: `job_id`, `title`, `company`, `description`, `job_url`,
+    `location`, `remote_type`, `salary_range`, `apply_link`
+
+  Query strategies (pass via `strategy` argument):
+  - `'combined'` *(default)* — single API call; joins role titles and cities with OR
+  - Add new strategies in `_STRATEGIES` dict; see module docstring for instructions
+
+### `callback/tasks/scan_jobs.py`
+- `scan_jobs(job_search_id: int, strategy: str = 'combined') -> list[dict]`
+  - Fetches jobs, deduplicates against `JobSeen`, bulk-inserts new seen records
+  - Returns unseen normalised job dicts ready for scoring
+  - Returns `[]` if search is inactive, has no role titles, or API returns nothing
+  - Idempotent — safe to re-run after partial failure
+
+### `callback/tasks/score_jobs.py`
+- `score_jobs(job_search_id: int, unseen_jobs: list[dict]) -> list[dict]`
+  - Scores each job via LLM, filters below `LLM_SCORE_THRESHOLD`, sorts descending, caps at `daily_limit`
+  - Scoring failures per job are caught and logged — flagged with `_score_failed: True` on the dict
+  - Candidates (passed threshold) come first in the return list; failures appended after
+  - Caller checks `_score_failed` flag to count failures separately
+
+### `callback/tasks/daily_run.py`
+- `daily_run(job_search_id: int | None = None)` — Celery task (`@shared_task`)
+  - If `job_search_id` is supplied, runs only that search (useful for manual triggers / debugging)
+  - If `None`, runs all active `JobSearch` records (normal scheduled invocation)
+  - Creates and updates a `DailyRunLog` per search
+  - Per-search errors are isolated — one failure never aborts other searches
+  - Apply stage is currently a stub; candidates are logged and counted but not submitted
+
+### `callback/ats/greenhouse.py` + `lever.py`
+*(Not yet implemented)*
 - `submit(application) -> { success: bool, method: str }`
 - ATS detection logic lives in `tasks/apply_job.py`, not in these clients
 
