@@ -1,4 +1,5 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL;
+// console.log('[apiClient] API_URL=', process.env.NEXT_PUBLIC_API_URL);
 
 /**
  * Core fetch wrapper. All API calls go through here.
@@ -20,6 +21,36 @@ async function request(path, options = {}) {
     },
     credentials: 'include',
   });
+
+  // Token expired — try to refresh once then retry
+  if (res.status === 401) {
+    const refreshed = await fetch(`${API_URL}/api/auth/token/refresh/`, {
+      method: 'POST',
+      credentials: 'include',
+    });
+
+    if (refreshed.ok) {
+      // Retry original request with new cookie
+      const retry = await fetch(`${API_URL}${path}`, {
+        ...restOptions,
+        headers: {
+          ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
+          ...extraHeaders,
+        },
+        credentials: 'include',
+      });
+
+      if (!retry.ok) {
+        const error = await retry.json().catch(() => ({ detail: 'An error occurred.' }));
+        throw { status: retry.status, ...error };
+      }
+      if (retry.status === 204) return null;
+      return retry.json();
+    }
+
+    // Refresh also failed — session is dead
+    throw { status: 401, detail: 'Session expired.' };
+  }
 
   if (!res.ok) {
     const error = await res.json().catch(() => ({ detail: 'An error occurred.' }));

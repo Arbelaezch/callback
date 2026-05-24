@@ -73,6 +73,7 @@ class LoginView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
+        # print('LOGIN DATA:', request.data)
         username = request.data.get('username')
         password = request.data.get('password')
 
@@ -186,3 +187,20 @@ class OnboardingView(APIView):
             )
 
         return Response({'detail': 'Onboarding complete.'}, status=status.HTTP_201_CREATED)
+
+
+class RefreshView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        refresh_token = request.COOKIES.get('refresh_token')
+        if not refresh_token:
+            return Response({'detail': 'No refresh token.'}, status=status.HTTP_401_UNAUTHORIZED)
+        
+        try:
+            refresh = RefreshToken(refresh_token)
+            response = Response({'detail': 'Refreshed.'})
+            set_auth_cookies(response, refresh.access_token, refresh)
+            return response
+        except TokenError:
+            return Response({'detail': 'Invalid refresh token.'}, status=status.HTTP_401_UNAUTHORIZED)
