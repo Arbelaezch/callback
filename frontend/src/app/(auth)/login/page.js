@@ -1,18 +1,26 @@
 'use client';
 
-import { useState, Suspense } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { login } from '@/lib/auth';
+import { useAuth } from '@/contexts/AuthContext';
 
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const next = searchParams.get('next') || '/dashboard';
 
+  const { user, loading: loadingUser, refresh } = useAuth();
   const [form, setForm] = useState({ username: '', password: '' });
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!loadingUser && user) router.replace(next);
+  }, [user, loadingUser, router, next]);
+
+  if (loadingUser) return null;
 
   function set(field) {
     return (e) => setForm((f) => ({ ...f, [field]: e.target.value }));
@@ -26,6 +34,7 @@ function LoginForm() {
 
     try {
       await login({ username: form.username, password: form.password });
+      await refresh();
     //   console.debug('[LoginForm] success, redirecting to %s', next);
       router.push(next);
     } catch (err) {

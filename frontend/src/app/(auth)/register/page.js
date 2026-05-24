@@ -1,16 +1,24 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { register } from '@/lib/auth';
+import { useAuth } from '@/contexts/AuthContext';
 
 export default function RegisterPage() {
   const router = useRouter();
 
+  const { user, loading: loadingUser } = useAuth();
   const [form, setForm] = useState({ username: '', email: '', password: '' });
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!loadingUser && user) router.replace('/dashboard');
+  }, [user, loadingUser, router]);
+
+  if (loadingUser) return null;
 
   function set(field) {
     return (e) => setForm((f) => ({ ...f, [field]: e.target.value }));
