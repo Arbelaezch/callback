@@ -1,11 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { login } from '@/lib/auth';
 
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const next = searchParams.get('next') || '/dashboard';
@@ -14,15 +14,22 @@ export default function LoginPage() {
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
 
+  function set(field) {
+    return (e) => setForm((f) => ({ ...f, [field]: e.target.value }));
+  }
+
   async function handleSubmit(e) {
     e.preventDefault();
     setError(null);
     setLoading(true);
+    // console.debug('[LoginForm] submit username=%s', form.username);
 
     try {
-      await login(form);
+      await login({ username: form.username, password: form.password });
+    //   console.debug('[LoginForm] success, redirecting to %s', next);
       router.push(next);
     } catch (err) {
+      console.warn('[LoginForm] error', err);
       setError(err.detail || 'Login failed.');
     } finally {
       setLoading(false);
@@ -32,6 +39,7 @@ export default function LoginPage() {
   return (
     <main className="min-h-screen flex items-center justify-center bg-background px-4">
       <div className="w-full max-w-sm space-y-6">
+
         <div className="space-y-1">
           <h1 className="text-2xl font-semibold tracking-tight">Welcome back</h1>
           <p className="text-sm text-muted-foreground">Sign in to your Callback account</p>
@@ -48,7 +56,7 @@ export default function LoginPage() {
               required
               autoComplete="username"
               value={form.username}
-              onChange={(e) => setForm({ ...form, username: e.target.value })}
+              onChange={set('username')}
               className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
             />
           </div>
@@ -63,7 +71,7 @@ export default function LoginPage() {
               required
               autoComplete="current-password"
               value={form.password}
-              onChange={(e) => setForm({ ...form, password: e.target.value })}
+              onChange={set('password')}
               className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
             />
           </div>
@@ -99,11 +107,20 @@ export default function LoginPage() {
 
         <p className="text-center text-sm text-muted-foreground">
           Don&apos;t have an account?{' '}
-          <Link href="/register" className="font-medium underline underline-offset-4">
-            Sign up
+          <Link href="/register" className="text-foreground font-medium hover:underline">
+            Register
           </Link>
         </p>
+
       </div>
     </main>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense>
+      <LoginForm />
+    </Suspense>
   );
 }

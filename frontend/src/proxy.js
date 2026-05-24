@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 
 // const PUBLIC_PATHS = ['/login', '/register'];
-const PUBLIC_PATHS = ['/login', '/onboarding'];
+const PUBLIC_PATHS = ['/login', '/register', '/onboarding'];
 
 
 // PASSWORD RESET SCAFFOLD:

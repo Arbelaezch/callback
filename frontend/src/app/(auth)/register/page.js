@@ -12,19 +12,26 @@ export default function RegisterPage() {
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
 
+  function set(field) {
+    return (e) => setForm((f) => ({ ...f, [field]: e.target.value }));
+  }
+
   async function handleSubmit(e) {
     e.preventDefault();
     setError(null);
     setLoading(true);
+    // console.debug('[RegisterForm] submit username=%s', form.username);
 
     try {
       await register(form);
+    //   console.debug('[RegisterForm] success, redirecting to /onboarding');
       router.push('/onboarding');
     } catch (err) {
-        const fieldError = ['username', 'email', 'password']
-            .map((f) => err[f]?.[0])
-            .find(Boolean);
-        setError(fieldError || err.detail || 'Registration failed.');
+      console.warn('[RegisterForm] error', err);
+      const fieldError = ['username', 'email', 'password']
+        .map((f) => err[f]?.[0])
+        .find(Boolean);
+      setError(fieldError || err.detail || 'Registration failed.');
     } finally {
       setLoading(false);
     }
@@ -33,6 +40,7 @@ export default function RegisterPage() {
   return (
     <main className="min-h-screen flex items-center justify-center bg-background px-4">
       <div className="w-full max-w-sm space-y-6">
+
         <div className="space-y-1">
           <h1 className="text-2xl font-semibold tracking-tight">Create an account</h1>
           <p className="text-sm text-muted-foreground">Start applying smarter today</p>
@@ -49,7 +57,7 @@ export default function RegisterPage() {
               required
               autoComplete="username"
               value={form.username}
-              onChange={(e) => setForm({ ...form, username: e.target.value })}
+              onChange={set('username')}
               className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
             />
           </div>
@@ -64,7 +72,7 @@ export default function RegisterPage() {
               required
               autoComplete="email"
               value={form.email}
-              onChange={(e) => setForm({ ...form, email: e.target.value })}
+              onChange={set('email')}
               className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
             />
           </div>
@@ -80,14 +88,13 @@ export default function RegisterPage() {
               autoComplete="new-password"
               minLength={8}
               value={form.password}
-              onChange={(e) => setForm({ ...form, password: e.target.value })}
+              onChange={set('password')}
               className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
             />
           </div>
 
           {/* EMAIL VERIFICATION SCAFFOLD:
-          After successful registration, redirect to /verify-email
-          instead of /onboarding and show a "check your inbox" message. */}
+          After register success, redirect to /verify-email instead of /onboarding */}
 
           {error && <p className="text-sm text-destructive">{error}</p>}
 
@@ -113,10 +120,11 @@ export default function RegisterPage() {
 
         <p className="text-center text-sm text-muted-foreground">
           Already have an account?{' '}
-          <Link href="/login" className="font-medium underline underline-offset-4">
+          <Link href="/login" className="text-foreground font-medium hover:underline">
             Sign in
           </Link>
         </p>
+
       </div>
     </main>
   );
