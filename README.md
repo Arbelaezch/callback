@@ -110,32 +110,109 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 
 ```
 /frontend
-  /app
-    /dashboard       # history, pause/resume, preferences
-    /onboarding      # profile setup, file upload
+  /src
+    /app
+      /(auth)
+        /login           # login page
+        /register        # register page
+      /dashboard         # history, pause/resume, preferences
+      /onboarding        # profile setup, file upload
+      layout.js          # root layout
+      page.js            # redirects to /dashboard
+    /components
+      /ui
+        TagInput.js      # tag/chip input for arrays
+    /hooks
+      /onboarding
+        useChoices.js    # fetches + caches job choice fields from API
+    /lib
+      apiClient.js       # fetch wrapper — all API calls go through here
+      auth.js            # auth helpers (login, logout, register, getMe)
+    middleware.js        # route protection — redirects unauthenticated users
 
 /backend
   /callback
-    /api             # DRF endpoints
     /tasks
-      scan_jobs.py   # JSearch fetch + dedup
-      score_jobs.py  # LLM scoring
-      apply_job.py   # ATS detection + Lambda dispatch
-      send_digest.py # daily digest email
-    /llm             # Prompt templates + Anthropic client
-    /ats             # Greenhouse + Lever API clients
-    /jsearch         # JSearch client
-    /storage         # S3 helpers
+      scan_jobs.py       # JSearch fetch + dedup
+      score_jobs.py      # LLM scoring
+      apply_job.py       # ATS detection + Lambda dispatch
+      send_digest.py     # daily digest email
+    /llm                 # prompt templates + Anthropic client
+    /ats                 # Greenhouse + Lever API clients
+    /jsearch             # JSearch client
+    db_config.py         # database config logic (dev vs prod)
+    health.py            # /api/health/ endpoint
+    settings.py          # Django settings — reads from .env via python-dotenv
+    storage.py           # S3 helpers (upload, delete) — dev stub, prod S3
+    urls.py              # root URL config
   /users
-    models.py        # CustomUser, Resume, CoverLetterTemplate
+    admin.py
+    authentication.py    # CookieJWTAuthentication backend
+    models.py            # CustomUser, Resume, CoverLetterTemplate
+    serializers.py       # RegisterSerializer, UserSerializer, OnboardingSerializer
+    views.py             # RegisterView, LoginView, LogoutView, MeView, OnboardingView
   /jobs
-    models.py        # JobSearch, JobSeen, Application, DailyRunLog
+    admin.py
+    models.py            # JobSearch, JobSeen, Application, DailyRunLog
+    views.py             # ChoicesView
+    urls.py              # /api/jobs/choices/
 
 /lambda
-  handler.py         # Browser Use submission
+  handler.py             # Browser Use submission
   requirements.txt
-  deploy.sh          # zip + aws lambda update-function-code
+  deploy.sh              # zip + aws lambda update-function-code
 ```
+
+---
+
+## Module Interfaces
+
+### Frontend
+
+#### `src/lib/apiClient.js` — HTTP client
+- `apiClient.get(path)`
+- `apiClient.post(path, body)`
+- `apiClient.patch(path, body)`
+- `apiClient.delete(path)`
+- `apiClient.multipart(path, formData)` — file uploads; omits `Content-Type` so the browser sets the multipart boundary
+- Always sends `credentials: 'include'` — cookies handled automatically
+- Throws `{ status, ...detail }` on non-2xx; returns `null` on 204
+
+#### `src/lib/auth.js` — auth helpers
+- `register({ username, email, password })`
+- `login({ username, password })`
+- `logout()`
+- `getMe()` → current user object
+- All calls go through `apiClient` — no direct fetch
+- Cookie-setting is server-side; callers don't handle tokens
+
+#### `src/hooks/onboarding/useChoices.js`
+- `useChoices()` → `{ choices, loading, error }`
+- Fetches `/api/jobs/choices/` once and caches in module scope
+- `choices` shape: `location_types`, `seniority_levels`, `application_statuses`, `submission_methods`, `remote_types` — each an array of `{ value, label }`
+
+### Backend
+
+#### `callback/storage.py`
+- `upload_resume(file, user_id: int) -> str` — returns S3 key
+- `delete_resume(s3_key: str) -> None`
+- In dev (`DEBUG=True`): writes to `/tmp/`, returns a real key — callers behave identically in dev and prod
+- In prod: real S3 calls — scaffold in place, activate by uncommenting boto3 block
+- Daily loop tasks must filter `resume__status='ready'` — storage does not enforce this
+
+#### `callback/llm/` — Anthropic client
+- `score_job(job, profile) -> { score: int, reason: str }`
+- `personalize_cover_letter(template, job) -> str`
+- Wraps Anthropic SDK — callers never import the SDK directly
+- Returns parsed dicts/strings, not raw API responses
+
+#### `callback/jsearch/client.py` — JSearch client
+- `fetch_jobs(role_titles, cities, location_types) -> list[dict]`
+- Wraps RapidAPI JSearch — callers never call RapidAPI directly
+
+#### `callback/ats/greenhouse.py` + `lever.py` — ATS clients
+- `submit(application) -> { success: bool, method: str }`
+- ATS detection logic lives in `tasks/apply_job.py`, not in these clients
 
 ---
 
@@ -213,7 +290,7 @@ aws lambda update-function-code \
 
 ```
 users (CustomUser)       -- extends AbstractUser, created_at/updated_at
-resumes                  -- s3_key, filename, is_default, user_id
+resumes                  -- s3_key, filename, is_default, status, user_id
 cover_letter_templates   -- label, body, is_default, user_id
 job_searches             -- role_titles[], cities[], location_types[], seniority_levels[],
                          --   years_experience, salary_min, excluded_companies[],
@@ -227,6 +304,7 @@ daily_run_logs           -- job_search_id, run_at, jobs_fetched, jobs_scored,
                          --   jobs_applied, jobs_failed, jobs_skipped, status, error
 ```
 
+`status` (resume): `pending` `ready` `failed`
 `status` (application): `pending` `submitted` `failed` `skipped`
 `status` (daily_run_log): `running` `completed` `partial` `failed`
 `submission_method`: `greenhouse_api` `lever_api` `browser_lambda`
@@ -255,18 +333,6 @@ def health(request):
 
 ---
 
-## Backups
-
-```bash
-# /etc/cron.d/callback-backup — runs 3am daily
-0 3 * * * root pg_dump $DATABASE_URL | gzip | \
-  aws s3 cp - s3://callback-backups/$(date +%Y-%m-%d).sql.gz
-```
-
-30-day retention. Cost: negligible.
-
----
-
 ## Submission Reliability
 
 | Method | Condition | Reliability |
@@ -279,14 +345,27 @@ Failures logged + surfaced in digest. User handles manually.
 
 ---
 
+## Backups
+
+```bash
+# /etc/cron.d/callback-backup — runs 3am daily
+0 3 * * * root pg_dump $DATABASE_URL | gzip | \
+  aws s3 cp - s3://callback-backups/$(date +%Y-%m-%d).sql.gz
+```
+
+30-day retention. Cost: negligible.
+
+---
+
 ## Roadmap
 
 **MVP**
 - [x] Django + Next.js, Dockerized
 - [x] Models + migrations
+- [x] Auth (simplejwt + httpOnly cookies)
+- [x] Onboarding + file upload (dev stub — S3 wiring pending)
 - [ ] Nginx host config
-- [ ] Auth (simplejwt)
-- [ ] Onboarding + file upload → S3
+- [ ] Wire up S3 for real file uploads
 - [ ] Celery beat cron
 - [ ] JSearch client + fetch + dedup
 - [ ] LLM scoring

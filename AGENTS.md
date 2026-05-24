@@ -82,7 +82,7 @@ S3
       /onboarding
         useChoices.js    # fetches + caches job choice fields from API
     /lib
-      api.js             # fetch wrapper — all API calls go through here
+      apiClient.js       # fetch wrapper — all API calls go through here
       auth.js            # auth helpers (login, logout, register, getMe)
     middleware.js        # route protection — redirects unauthenticated users
 
@@ -347,11 +347,35 @@ aws lambda update-function-code \
 - Access via `process.env.VARIABLE_NAME` — never hardcode values
 
 ### API Communication
-- All API calls go through `src/lib/api.js` — never call fetch directly in components
-- Exception: multipart file uploads use `api.multipart()` which omits `Content-Type` so the browser sets the boundary
+- All API calls go through `src/lib/apiClient.js` — never call fetch directly in components
+- Exception: multipart file uploads use `apiClient.multipart()` which omits `Content-Type` so the browser sets the boundary
 - Django backend at `process.env.NEXT_PUBLIC_API_URL`
 - JWT stored in httpOnly cookie — never localStorage
-- Always pass `credentials: 'include'` — handled by `api.js`
+- Always pass `credentials: 'include'` — handled by `apiClient.js`
+
+### Module Interfaces
+
+#### `src/lib/apiClient.js` — HTTP client
+- `apiClient.get(path)`
+- `apiClient.post(path, body)`
+- `apiClient.patch(path, body)`
+- `apiClient.delete(path)`
+- `apiClient.multipart(path, formData)` — file uploads; omits `Content-Type` so the browser sets the multipart boundary
+- Always sends `credentials: 'include'` — cookies handled automatically
+- Throws `{ status, ...detail }` on non-2xx; returns `null` on 204
+
+#### `src/lib/auth.js` — auth helpers
+- `register({ username, email, password })`
+- `login({ username, password })`
+- `logout()`
+- `getMe()` → current user object
+- All calls go through `apiClient` — no direct fetch
+- Cookie-setting is server-side; callers don't handle tokens
+
+#### `src/hooks/onboarding/useChoices.js`
+- `useChoices()` → `{ choices, loading, error }`
+- Fetches `/api/jobs/choices/` once and caches in module scope
+- `choices` shape: `location_types`, `seniority_levels`, `application_statuses`, `submission_methods`, `remote_types` — each an array of `{ value, label }`
 
 ---
 
@@ -390,6 +414,29 @@ aws lambda update-function-code \
 ### URLs
 - All API endpoints prefixed with `/api/`
 - Version prefix not required at MVP (`/api/jobs/` not `/api/v1/jobs/`)
+
+### Module Interfaces
+
+#### `callback/storage.py`
+- `upload_resume(file, user_id: int) -> str` — returns S3 key
+- `delete_resume(s3_key: str) -> None`
+- In dev (`DEBUG=True`): writes to `/tmp/`, returns a real key — callers behave identically in dev and prod
+- In prod: real S3 calls — scaffold in place, activate by uncommenting boto3 block
+- Daily loop tasks must filter `resume__status='ready'` — storage does not enforce this
+
+#### `callback/llm/` — Anthropic client
+- `score_job(job, profile) -> { score: int, reason: str }`
+- `personalize_cover_letter(template, job) -> str`
+- Wraps Anthropic SDK — callers never import the SDK directly
+- Returns parsed dicts/strings, not raw API responses
+
+#### `callback/jsearch/client.py` — JSearch client
+- `fetch_jobs(role_titles, cities, location_types) -> list[dict]`
+- Wraps RapidAPI JSearch — callers never call RapidAPI directly
+
+#### `callback/ats/greenhouse.py` + `lever.py` — ATS clients
+- `submit(application) -> { success: bool, method: str }`
+- ATS detection logic lives in `tasks/apply_job.py`, not in these clients
 
 ---
 
