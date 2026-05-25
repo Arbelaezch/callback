@@ -15,7 +15,7 @@ for debugging, call score_jobs() directly.
 import logging
 
 from callback.config import LLM_SCORE_THRESHOLD
-from callback.llm import score_job
+from pipeline.llm import score_job
 from jobs.models import JobSearch
 
 logger = logging.getLogger(__name__)

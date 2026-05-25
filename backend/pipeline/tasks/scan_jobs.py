@@ -15,7 +15,7 @@ jobs that were already marked as seen.
 
 import logging
 
-from callback.jsearch.client import fetch_jobs
+from pipeline.jsearch.client import fetch_jobs
 from jobs.models import JobSearch, JobSeen
 
 logger = logging.getLogger(__name__)
