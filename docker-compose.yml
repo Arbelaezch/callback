@@ -51,6 +51,12 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/api/health/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
 
   celery:
     build:
@@ -72,7 +78,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    restart: unless-stopped
+    restart: on-failure
     # command: celery -A callback beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler # prod
     command: celery -A callback beat --loglevel=info # dev
     volumes:
@@ -99,6 +105,10 @@ services:
       - .env
     environment:
       - NODE_ENV=development
+      - NODE_OPTIONS=--max-old-space-size=1024
+    depends_on:
+      backend:
+        condition: service_healthy
 
 volumes:
   postgres_data:
