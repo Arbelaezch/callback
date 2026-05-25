@@ -218,7 +218,7 @@ Non-secret hardcoded constants. Import directly: `from callback.config import LL
 - Daily loop tasks must filter `resume__status='ready'` — storage does not enforce this
 
 #### `callback/llm/`
-Import via `from callback.llm import score_job, personalize_cover_letter`. Never import `anthropic` outside this package.
+Import via `from pipeline.llm import score_job, personalize_cover_letter`. Never import `anthropic` outside this package.
  
 - `score_job(job: dict, profile: dict) -> dict`
   Returns `{ "score": int (1–10), "reason": str }`

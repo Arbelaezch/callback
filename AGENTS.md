@@ -496,7 +496,7 @@ Constants:
 - Daily loop tasks must filter `resume__status='ready'` — storage does not enforce this
 
 ### `callback/llm/`
-Import via `from callback.llm import score_job, personalize_cover_letter`.
+Import via `from pipeline.llm import score_job, personalize_cover_letter`.
 Never import `anthropic` directly outside this package.
 
 - `score_job(job: dict, profile: dict) -> dict`
@@ -512,7 +512,7 @@ Never import `anthropic` directly outside this package.
   - Re-raises `anthropic.*` exceptions on API error
 
 ### `callback/jsearch/client.py`
-Import via `from callback.jsearch.client import fetch_jobs`.
+Import via `from pipeline.jsearch.client import fetch_jobs`.
 
 - `fetch_jobs(role_titles, cities, location_types, strategy='combined') -> list[dict]`
   - Returns normalised job dicts, de-duplicated by `job_id` across all queries

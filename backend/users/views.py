@@ -15,7 +15,7 @@ from .serializers import (
 )
 from .models import Resume, CoverLetterTemplate
 from jobs.models import JobSearch
-from callback.storage import upload_resume
+from pipeline.storage import upload_resume
 
 User = get_user_model()
 

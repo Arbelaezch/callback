@@ -45,6 +45,8 @@ INSTALLED_APPS = [
     # local
     'users',
     'jobs',
+    'pipeline',
+    'notifications',
 ]
 
 MIDDLEWARE = [

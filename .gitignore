@@ -73,6 +73,13 @@ lambda/function.zip
 Thumbs.db
 
 # ========================
+# Celery
+# ========================
+celerybeat-schedule
+celerybeat-schedule.shm
+celerybeat-schedule.wal
+
+# ========================
 # Misc
 # ========================
 *.bak
