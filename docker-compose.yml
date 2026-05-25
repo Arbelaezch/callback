@@ -26,7 +26,6 @@ services:
     command: redis-server --requirepass ${REDIS_PASSWORD}
     volumes:
       - redis_data:/data
-      - /app/node_modules
     ports:
       - "6379:6379"          # exposed locally for debugging
     healthcheck:
@@ -74,7 +73,8 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     restart: unless-stopped
-    command: celery -A callback beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    # command: celery -A callback beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler # prod
+    command: celery -A callback beat --loglevel=info # dev
     volumes:
       - ./backend:/app
     env_file:
