@@ -9,6 +9,9 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL;
  * Auth mutation routes are excluded from the refresh attempt since a 401
  * there is a genuine auth failure, not an expired token.
  *
+ * Concurrent 401s share a single refresh attempt via refreshPromise —
+ * prevents a thundering herd of parallel refresh calls on restart.
+ *
  * SOCIAL AUTH SCAFFOLD:
  * When adding social providers, pass provider tokens through this
  * same wrapper to /api/auth/social/ — no changes needed here.
@@ -20,6 +23,21 @@ const AUTH_NO_REFRESH = [
   '/api/auth/register/',
   '/api/auth/token/refresh/',
 ];
+
+let refreshPromise = null;
+
+function refreshToken() {
+  if (refreshPromise) return refreshPromise;
+
+  refreshPromise = fetch(`${API_URL}/api/auth/token/refresh/`, {
+    method: 'POST',
+    credentials: 'include',
+  }).finally(() => {
+    refreshPromise = null;
+  });
+
+  return refreshPromise;
+}
 
 async function request(path, options = {}) {
   const { headers: extraHeaders, ...restOptions } = options;
@@ -41,11 +59,7 @@ async function request(path, options = {}) {
       throw { status: res.status, ...error };
     }
 
-    // Token expired — try to refresh once then retry
-    const refreshed = await fetch(`${API_URL}/api/auth/token/refresh/`, {
-      method: 'POST',
-      credentials: 'include',
-    });
+    const refreshed = await refreshToken();
 
     if (refreshed.ok) {
       // Retry original request with new cookie
