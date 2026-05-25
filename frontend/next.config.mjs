@@ -2,8 +2,15 @@
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  watchOptions: {
-    ignored: /node_modules/,
+  turbopack: {
+    resolveExtensions: ['.js', '.jsx', '.ts', '.tsx'],
+  },
+  experimental: {
+    turbo: {
+      watchOptions: {
+        ignored: ['**/node_modules/**', '**/.next/**'],
+      },
+    },
   },
   async rewrites() {
     return [
