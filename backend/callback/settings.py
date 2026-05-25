@@ -169,3 +169,31 @@ if not DEBUG:
 LLM_SCORE_THRESHOLD = config.LLM_SCORE_THRESHOLD
 AUTH_COOKIE_MAX_AGE = config.AUTH_COOKIE_MAX_AGE
 AUTH_COOKIE_MAX_AGE = AUTH_COOKIE_MAX_AGE
+
+
+# -----------------------------------------------------------------
+# Logging
+# -----------------------------------------------------------------
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'filters': {
+        'exclude_health': {
+            '()': 'django.utils.log.CallbackFilter',
+            'callback': lambda record: '/api/health/' not in record.getMessage(),
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'filters': ['exclude_health'],
+        },
+    },
+    'loggers': {
+        'django.server': {
+            'handlers': ['console'],
+            'level': 'INFO',
+        },
+    },
+}
