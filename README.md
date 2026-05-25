@@ -118,29 +118,37 @@ INTERNAL_API_URL=http://backend:8000        # server-side only — Next.js → D
         /register        # register page
       /dashboard         # history, pause/resume, preferences
       /onboarding        # profile setup, file upload
-      layout.js          # root layout
+      layout.js          # root layout — wraps app in AuthProvider
+      globals.css        # global styles
       page.js            # redirects to /dashboard
     /components
+      /layout
+        Navbar.js        # auth-aware nav — reads from AuthContext
       /ui
         TagInput.js      # tag/chip input for arrays
+    /contexts
+      AuthContext.js     # AuthProvider + useAuth hook
     /hooks
       /onboarding
         useChoices.js    # fetches + caches job choice fields from API
     /lib
       apiClient.js       # fetch wrapper — all API calls go through here
       auth.js            # auth helpers (login, logout, register, getMe)
-    middleware.js        # route protection — redirects unauthenticated users
- 
+    proxy.js             # route protection — redirects unauthenticated users
+
 /backend
-  /callback
+  /callback              # Django project config — settings, URLs, Celery, wsgi only
     config.py            # non-secret constants (LLM model, timeouts, beat schedule, thresholds)
-    celery.py            # Celery app setup
+    celery.py            # Celery app setup — autodiscovers tasks from pipeline
     db_config.py         # database config logic (dev vs prod)
     health.py            # /api/health/ endpoint
     settings.py          # Django settings — env vars + imports from config.py
-    storage.py           # S3 helpers — dev stub, prod S3
     urls.py              # root URL config
+    wsgi.py
+
+  /pipeline              # Django app — all job pipeline business logic, no models
     /tasks
+      __init__.py        # imports daily_run for Celery registration
       daily_run.py       # orchestrator Celery task
       scan_jobs.py       # JSearch fetch + dedup
       score_jobs.py      # LLM scoring + ranking
@@ -154,23 +162,41 @@ INTERNAL_API_URL=http://backend:8000        # server-side only — Next.js → D
     /ats
       greenhouse.py      # Greenhouse API client (not yet implemented)
       lever.py           # Lever API client (not yet implemented)
-  /users
+    storage.py           # S3 helpers — dev stub, prod S3
+
+  /users                 # Django app — auth, user model, resume, cover letter
     admin.py
     authentication.py    # CookieJWTAuthentication backend
     models.py            # CustomUser, Resume, CoverLetterTemplate
     serializers.py       # RegisterSerializer, UserSerializer, OnboardingSerializer
     views.py             # RegisterView, LoginView, LogoutView, MeView, OnboardingView
-  /jobs
-    admin.py
+
+  /jobs                  # Django app — job search config, applications, run logs
+    admin.py             # includes trigger_daily_run admin action
     models.py            # JobSearch, JobSeen, Application, DailyRunLog
     views.py             # ChoicesView
     urls.py              # /api/jobs/choices/
- 
+
+  /notifications         # Django app — notification preferences + delivery (placeholder)
+    models.py            # placeholder — no models yet
+
 /lambda
   handler.py             # Browser Use submission
   requirements.txt
   deploy.sh              # zip + aws lambda update-function-code
 ```
+
+---
+
+## Django Apps
+
+| App | Purpose |
+|---|---|
+| `callback` | Project config only — settings, URLs, Celery, wsgi. No models, no views. |
+| `pipeline` | All job pipeline business logic — tasks, LLM, JSearch, ATS, storage. No models. |
+| `jobs` | Job search configuration, applications, run logs. Models + views + admin. |
+| `users` | Auth, custom user model, resume, cover letter templates. Models + views. |
+| `notifications` | Notification preferences and delivery. Models placeholder — not yet implemented. |
 
 ---
 
@@ -200,54 +226,65 @@ INTERNAL_API_URL=http://backend:8000        # server-side only — Next.js → D
 - Fetches `/api/jobs/choices/` once and caches in module scope
 - `choices` shape: `location_types`, `seniority_levels`, `application_statuses`, `submission_methods`, `remote_types` — each an array of `{ value, label }`
 
+#### `src/contexts/AuthContext.js` — auth state
+- `AuthProvider` — wraps the app in `layout.js`; fetches `getMe()` once on mount
+- `useAuth()` → `{ user, loading, refresh, logout }`
+  - `user` — current user object or `null`
+  - `loading` — true until first `getMe()` resolves
+  - `refresh()` — re-fetches current user (call after login/register)
+  - `logout()` — calls `auth.logout()` and clears user state
+- Never call `getMe()` directly in components — use `useAuth()` instead
+
 ### Backend
 
 #### `callback/config.py` — application constants
 Non-secret hardcoded constants. Import directly: `from callback.config import LLM_MODEL`.
- 
+
 - `LLM_MODEL`, `LLM_MAX_TOKENS`, `LLM_TIMEOUT_SECONDS`
 - `LLM_SCORE_THRESHOLD` — minimum score to pass a job to the apply stage
 - `JSEARCH_HOST`, `JSEARCH_TIMEOUT_SECONDS`, `JSEARCH_PAGE_SIZE`
 - `AUTH_COOKIE_MAX_AGE` — must match `SIMPLE_JWT.REFRESH_TOKEN_LIFETIME`
 - `CELERY_TIMEZONE`, `CELERY_BEAT_SCHEDULE`
 
-#### `callback/storage.py`
+#### `pipeline/storage.py`
 - `upload_resume(file, user_id: int) -> str` — returns S3 key
 - `delete_resume(s3_key: str) -> None`
 - Dev: writes to `/tmp/`. Prod: real S3. Callers behave identically in both environments.
 - Daily loop tasks must filter `resume__status='ready'` — storage does not enforce this
 
-#### `callback/llm/`
+#### `pipeline/llm/`
 Import via `from pipeline.llm import score_job, personalize_cover_letter`. Never import `anthropic` outside this package.
- 
+
 - `score_job(job: dict, profile: dict) -> dict`
   Returns `{ "score": int (1–10), "reason": str }`
+
 - `personalize_cover_letter(template: str, job: dict) -> str`
   Returns full personalised cover letter text
 
-#### `callback/jsearch/client.py`
+#### `pipeline/jsearch/client.py`
 - `fetch_jobs(role_titles, cities, location_types, strategy='combined') -> list[dict]`
   - Never raises on API error — returns `[]` and logs
   - Normalised job keys: `job_id`, `title`, `company`, `description`, `job_url`, `location`, `remote_type`, `salary_range`, `apply_link`
   - Strategies: `'combined'` (default). Add new strategies to `_STRATEGIES` dict — see module docstring.
 
-#### `callback/tasks/scan_jobs.py`
+#### `pipeline/tasks/scan_jobs.py`
 - `scan_jobs(job_search_id: int, strategy: str = 'combined') -> list[dict]`
   Fetches, deduplicates, writes `JobSeen` records, returns unseen jobs. Idempotent.
 
-#### `callback/tasks/score_jobs.py`
+#### `pipeline/tasks/score_jobs.py`
 - `score_jobs(job_search_id: int, unseen_jobs: list[dict]) -> list[dict]`
   Scores via LLM, filters by threshold, sorts descending, caps at `daily_limit`.
   Scoring failures flagged with `_score_failed: True` — appended after candidates.
 
-#### `callback/tasks/daily_run.py`
+#### `pipeline/tasks/daily_run.py`
 - `daily_run(job_search_id: int | None = None)` — Celery task
   Pass a `job_search_id` to run one search manually; omit to run all active searches.
   Creates and updates a `DailyRunLog` per search. Per-search failures are isolated.
 
-#### `callback/ats/greenhouse.py` + `lever.py`
+#### `pipeline/ats/greenhouse.py` + `lever.py`
 *(Not yet implemented)*
 - `submit(application) -> { success: bool, method: str }`
+- ATS detection logic lives in `pipeline/tasks/apply_job.py`, not in these clients
 
 ---
 
@@ -306,7 +343,7 @@ user:   Template: {cover_letter_text}
 }
 ```
 
-One invocation per application (fan-out). Lambda writes result back to `applications` table directly. 15 min timeout — single application fits comfortably.
+One invocation per application (fan-out). Lambda writes result back to `applications` table directly. 15 min timeout.
 
 **Deploy:**
 ```bash
@@ -358,14 +395,6 @@ sentry_sdk.init(dsn=os.environ['SENTRY_DSN'], traces_sample_rate=0.2)
 - `https://yourcallbackdomain.com/api/health/` (Django)
 - `https://yourcallbackdomain.com` (Next.js)
 
-**Health endpoint:**
-```python
-@api_view(['GET'])
-@permission_classes([AllowAny])
-def health(request):
-    return Response({"status": "ok"})
-```
-
 ---
 
 ## Submission Reliability
@@ -399,11 +428,11 @@ Failures logged + surfaced in digest. User handles manually.
 - [x] Models + migrations
 - [x] Auth (simplejwt + httpOnly cookies)
 - [x] Onboarding + file upload (dev stub — S3 wiring pending)
+- [x] JSearch client + fetch + dedup
+- [x] LLM scoring
+- [x] Celery beat cron
 - [ ] Nginx host config
 - [ ] Wire up S3 for real file uploads
-- [ ] Celery beat cron
-- [ ] JSearch client + fetch + dedup
-- [ ] LLM scoring
 - [ ] Greenhouse + Lever clients
 - [ ] Lambda (Browser Use) + deploy script
 - [ ] Cover letter personalization

@@ -92,16 +92,18 @@ S3
     proxy.js             # route protection — redirects unauthenticated users
 
 /backend
-  /callback
+  /callback              # Django project config — settings, URLs, Celery, wsgi only
     config.py            # non-secret constants (LLM model, timeouts, beat schedule, thresholds)
-    celery.py            # Celery app — autodiscovers tasks, reads config from Django settings
+    celery.py            # Celery app — autodiscovers tasks from pipeline app
     db_config.py         # database config logic (dev vs prod)
     health.py            # /api/health/ endpoint
     settings.py          # Django settings — reads from .env via python-dotenv; imports constants from config.py
-    storage.py           # S3 helpers (upload, delete) — dev stub, prod S3
     urls.py              # root URL config
+    wsgi.py
+
+  /pipeline              # Django app — all job pipeline business logic, no models
     /tasks
-      __init__.py
+      __init__.py        # imports daily_run so Celery autodiscovery registers it
       daily_run.py       # orchestrator Celery task — scan → score → apply (stub) → log
       scan_jobs.py       # JSearch fetch + dedup against jobs_seen
       score_jobs.py      # LLM scoring, threshold filter, top-N selection
@@ -114,25 +116,45 @@ S3
       __init__.py
       client.py          # JSearch API wrapper — pluggable query strategies
     /ats
+      __init__.py
       greenhouse.py      # Greenhouse API client (not yet implemented)
       lever.py           # Lever API client (not yet implemented)
-  /users
+    storage.py           # S3 helpers (upload, delete) — dev stub, prod S3
+    apps.py
+
+  /users                 # Django app — auth, user model, resume, cover letter
     admin.py
     authentication.py    # CookieJWTAuthentication backend
     models.py            # CustomUser, Resume, CoverLetterTemplate
     serializers.py       # RegisterSerializer, UserSerializer, OnboardingSerializer
     views.py             # RegisterView, LoginView, LogoutView, MeView, OnboardingView
-  /jobs
-    admin.py
+
+  /jobs                  # Django app — job search config, applications, run logs
+    admin.py             # includes trigger_daily_run admin action
     models.py            # JobSearch, JobSeen, Application, DailyRunLog
     views.py             # ChoicesView
     urls.py              # /api/jobs/choices/
+
+  /notifications         # Django app — notification preferences + delivery (placeholder)
+    models.py            # placeholder — no models yet
 
 /lambda
   handler.py             # Browser Use submission
   requirements.txt
   deploy.sh              # zip + aws lambda update-function-code
 ```
+
+---
+
+## Django Apps
+
+| App | Purpose |
+|---|---|
+| `callback` | Project config only — settings, URLs, Celery, wsgi. No models, no views. |
+| `pipeline` | All job pipeline business logic — tasks, LLM, JSearch, ATS, storage. No models. |
+| `jobs` | Job search configuration, applications, run logs. Models + views + admin. |
+| `users` | Auth, custom user model, resume, cover letter templates. Models + views. |
+| `notifications` | Notification preferences and delivery. Models placeholder — not yet implemented. |
 
 ---
 
@@ -212,10 +234,10 @@ JWT via `djangorestframework-simplejwt`. Tokens stored in httpOnly cookies — n
 - All endpoints require `IsAuthenticated` unless explicitly decorated with `@permission_classes([AllowAny])`
 - `secure=not DEBUG` on cookies — works over HTTP in dev, HTTPS only in prod
 - Open redirect protection on the `next` param in middleware and login page — only relative paths accepted
-- Token refresh handled silently in `apiClient.js` — on 401, attempts 
+- Token refresh handled silently in `apiClient.js` — on 401, attempts
   `POST /api/auth/token/refresh/` then retries the original request once
 - Auth endpoints (`/api/auth/*`) skip the refresh flow and throw immediately
-- `AuthContext.js` is the single source of truth for user state — 
+- `AuthContext.js` is the single source of truth for user state —
   components read via `useAuth()`, never call `getMe()` directly
 
 Scaffolded for future social auth at `/api/auth/social/` and password reset/email verification endpoints.
@@ -233,7 +255,7 @@ Resume uploads use a two-phase pattern to avoid orphaned files or records:
 
 Daily loop tasks must filter `resume__status='ready'` when selecting resumes for applications.
 
-`storage.py` currently stubs S3 — saves to `/tmp/` in dev. Replace the stub with real boto3 calls when S3 is configured.
+`pipeline/storage.py` currently stubs S3 — saves to `/tmp/` in dev. Replace the stub with real boto3 calls when S3 is configured.
 
 ---
 
@@ -283,11 +305,11 @@ aws lambda update-function-code \
 - [x] Models + migrations
 - [x] Auth (simplejwt + httpOnly cookies)
 - [x] Onboarding + file upload (dev stub — S3 wiring pending)
+- [x] JSearch client + fetch + dedup
+- [x] LLM scoring
+- [x] Celery beat cron
 - [ ] Nginx host config
 - [ ] Wire up S3 for real file uploads
-- [ ] Celery beat cron
-- [ ] JSearch client + fetch + dedup
-- [ ] LLM scoring
 - [ ] Greenhouse + Lever clients
 - [ ] Lambda (Browser Use) + deploy script
 - [ ] Cover letter personalization
@@ -313,10 +335,10 @@ and are imported into `settings.py` via `from callback import config`. This keep
 env-only and makes constants safe to commit.
 
 Rule of thumb:
-
 - Value comes from the environment → `settings.py` via `os.environ`
 - Value is a hardcoded constant → `config.py`
 - Value is a secret → `.env` only, never committed
+
 Application code that needs a constant imports directly from `callback.config`, not from
 `django.conf.settings`, unless Django itself requires the value to be on the settings module
 (e.g. Celery beat schedule, which is read via `config_from_object`).
@@ -459,7 +481,9 @@ Application code that needs a constant imports directly from `callback.config`, 
 - Never hardcode secrets
 
 ### Celery
-- All background tasks in `/callback/tasks/`
+- All background tasks in `pipeline/tasks/`
+- `pipeline/tasks/__init__.py` imports `daily_run` so Celery autodiscovery registers it
+- `callback/celery.py` calls `app.autodiscover_tasks(['pipeline'])`
 - Tasks must be idempotent — safe to retry on failure
 - Always use `.delay()` or `.apply_async()` — never call task functions directly
 - Log task start, success, and failure explicitly
@@ -468,15 +492,15 @@ Application code that needs a constant imports directly from `callback.config`, 
 - All API endpoints prefixed with `/api/`
 - Version prefix not required at MVP (`/api/jobs/` not `/api/v1/jobs/`)
 
-### Module Interfaces
+---
+
+## Backend — Module Interfaces
 
 ### `callback/config.py` — application constants
-
 All hardcoded, non-secret configuration. Import directly in application code — do not
 read these via `django.conf.settings` unless Django requires it.
 
 Constants:
-
 - `LLM_MODEL` — Anthropic model string
 - `LLM_MAX_TOKENS` — max tokens for all LLM calls
 - `LLM_TIMEOUT_SECONDS` — Anthropic client timeout
@@ -488,14 +512,14 @@ Constants:
 - `CELERY_TIMEZONE` — timezone for beat schedule; inherits Django `TIME_ZONE`
 - `CELERY_BEAT_SCHEDULE` — beat schedule dict; change fire time here
 
-### `callback/storage.py`
+### `pipeline/storage.py`
 - `upload_resume(file, user_id: int) -> str` — returns S3 key
 - `delete_resume(s3_key: str) -> None`
 - Dev (`DEBUG=True`): writes to `/tmp/`, returns a real key — callers behave identically in dev and prod
 - Prod: real S3 calls — scaffold in place, activate by uncommenting boto3 block
 - Daily loop tasks must filter `resume__status='ready'` — storage does not enforce this
 
-### `callback/llm/`
+### `pipeline/llm/`
 Import via `from pipeline.llm import score_job, personalize_cover_letter`.
 Never import `anthropic` directly outside this package.
 
@@ -511,7 +535,7 @@ Never import `anthropic` directly outside this package.
   - Returns full personalised cover letter text
   - Re-raises `anthropic.*` exceptions on API error
 
-### `callback/jsearch/client.py`
+### `pipeline/jsearch/client.py`
 Import via `from pipeline.jsearch.client import fetch_jobs`.
 
 - `fetch_jobs(role_titles, cities, location_types, strategy='combined') -> list[dict]`
@@ -524,21 +548,21 @@ Import via `from pipeline.jsearch.client import fetch_jobs`.
   - `'combined'` *(default)* — single API call; joins role titles and cities with OR
   - Add new strategies in `_STRATEGIES` dict; see module docstring for instructions
 
-### `callback/tasks/scan_jobs.py`
+### `pipeline/tasks/scan_jobs.py`
 - `scan_jobs(job_search_id: int, strategy: str = 'combined') -> list[dict]`
   - Fetches jobs, deduplicates against `JobSeen`, bulk-inserts new seen records
   - Returns unseen normalised job dicts ready for scoring
   - Returns `[]` if search is inactive, has no role titles, or API returns nothing
   - Idempotent — safe to re-run after partial failure
 
-### `callback/tasks/score_jobs.py`
+### `pipeline/tasks/score_jobs.py`
 - `score_jobs(job_search_id: int, unseen_jobs: list[dict]) -> list[dict]`
   - Scores each job via LLM, filters below `LLM_SCORE_THRESHOLD`, sorts descending, caps at `daily_limit`
   - Scoring failures per job are caught and logged — flagged with `_score_failed: True` on the dict
   - Candidates (passed threshold) come first in the return list; failures appended after
   - Caller checks `_score_failed` flag to count failures separately
 
-### `callback/tasks/daily_run.py`
+### `pipeline/tasks/daily_run.py`
 - `daily_run(job_search_id: int | None = None)` — Celery task (`@shared_task`)
   - If `job_search_id` is supplied, runs only that search (useful for manual triggers / debugging)
   - If `None`, runs all active `JobSearch` records (normal scheduled invocation)
@@ -546,10 +570,10 @@ Import via `from pipeline.jsearch.client import fetch_jobs`.
   - Per-search errors are isolated — one failure never aborts other searches
   - Apply stage is currently a stub; candidates are logged and counted but not submitted
 
-### `callback/ats/greenhouse.py` + `lever.py`
+### `pipeline/ats/greenhouse.py` + `lever.py`
 *(Not yet implemented)*
 - `submit(application) -> { success: bool, method: str }`
-- ATS detection logic lives in `tasks/apply_job.py`, not in these clients
+- ATS detection logic lives in `pipeline/tasks/apply_job.py`, not in these clients
 
 ---
 

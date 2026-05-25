@@ -78,6 +78,8 @@ Thumbs.db
 celerybeat-schedule
 celerybeat-schedule.shm
 celerybeat-schedule.wal
+*/celerybeat-schedule-shm
+*/celerybeat-schedule-wal
 
 # ========================
 # Misc
