@@ -2,6 +2,9 @@
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  watchOptions: {
+    ignored: /node_modules/,
+  },
   async rewrites() {
     return [
       {
