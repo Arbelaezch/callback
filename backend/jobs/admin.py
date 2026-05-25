@@ -1,7 +1,6 @@
-from django.contrib import admin
-from django.utils import timezone
+from django.contrib import admin, messages
 
-from .models import JobSearch, JobSeen, Application, DailyRunLog
+from .models import Application, DailyRunLog, JobSearch, JobSeen
 
 
 @admin.register(JobSearch)
@@ -10,7 +9,7 @@ class JobSearchAdmin(admin.ModelAdmin):
     list_filter = ('active',)
     ordering = ('-created_at',)
     readonly_fields = ('created_at', 'updated_at')
-    actions = ['activate_searches', 'deactivate_searches']
+    actions = ['activate_searches', 'deactivate_searches', 'trigger_daily_run']
 
     @admin.action(description='Activate selected searches')
     def activate_searches(self, request, queryset):
@@ -19,6 +18,29 @@ class JobSearchAdmin(admin.ModelAdmin):
     @admin.action(description='Deactivate selected searches')
     def deactivate_searches(self, request, queryset):
         queryset.update(active=False)
+
+    @admin.action(description='Run daily job search now')
+    def trigger_daily_run(self, request, queryset):
+        from pipeline.tasks.daily_run import daily_run
+
+        triggered = 0
+        for job_search in queryset:
+            if not job_search.active:
+                self.message_user(
+                    request,
+                    f'Skipped "{job_search}" — inactive.',
+                    level=messages.WARNING,
+                )
+                continue
+            daily_run.delay(job_search_id=job_search.pk)
+            triggered += 1
+
+        if triggered:
+            self.message_user(
+                request,
+                f'Triggered daily run for {triggered} job search(es).',
+                level=messages.SUCCESS,
+            )
 
 
 @admin.register(Application)
