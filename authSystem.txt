@@ -1,0 +1,51 @@
+Auth System Overview
+The full request flow:
+Browser (localhost:3000)
+  → Next.js rewrite (/api/* → backend:8000)
+    → Django CookieJWTAuthentication
+      → reads access_token cookie
+        → returns user or 401
+Cookie setup (Django set_auth_cookies):
+
+access_token — 15 min lifetime, httpOnly, SameSite=Lax, secure only in prod
+refresh_token — 7 day lifetime, same flags, rotated on use, blacklisted on logout
+secure=not DEBUG means they travel over plain HTTP in dev, which is fine
+
+Login flow:
+
+User POSTs credentials to /api/auth/login/
+Django validates, generates JWT pair via RefreshToken.for_user(user)
+Both tokens set as httpOnly cookies on the response
+Frontend never touches the tokens directly — they're invisible to JS
+
+Request authentication:
+
+CookieJWTAuthentication reads access_token from cookies first
+Falls back to Authorization header so the DRF browsable API still works
+All endpoints require IsAuthenticated by default — public endpoints explicitly set AllowAny
+
+Middleware (Next.js):
+
+Checks for access_token cookie presence on every non-public route
+No cookie → redirect to /login?next=<path>
+Cookie present on auth pages → redirect to /dashboard
+Only checks presence, not validity — an expired token gets through middleware but fails at Django, which the dashboard handles by redirecting to /login
+
+Logout:
+
+POSTs to /api/auth/logout/
+Django blacklists the refresh token so it can't be rotated into a new access token
+Both cookies cleared from the response
+
+
+Why the proxy (port 3000 for everything)
+The core problem is cookie scope. Browsers scope cookies by origin, and origin is scheme + hostname + port. So localhost:3000 and localhost:8000 are completely different origins — a cookie set by Django on port 8000 will not be sent by the browser on requests that go to port 3000, and vice versa.
+Before the proxy your flow was:
+Browser on :3000 → API call directly to :8000
+Django sets cookie on :8000
+Browser on :3000 makes next request → cookie not sent → 401
+With the proxy:
+Browser on :3000 → /api/* → Next.js rewrites to backend:8000 internally
+Django sets cookie on :3000 (from the browser's perspective)
+Browser on :3000 makes next request → cookie sent → 200
+The rewrite is server-side — the browser never knows requests went to port 8000. It only ever talks to port 3000, so the cookie origin is consistent. In production this isn't an issue because both services sit behind Nginx on the same domain.
