@@ -13,8 +13,8 @@ from .serializers import (
     UserSerializer,
     OnboardingSerializer,
 )
-from .models import Resume, CoverLetterTemplate
-from jobs.models import JobSearch
+from .models import CoverLetterSample, Portfolio, Resume
+from jobs.models import Agent, Search
 from pipeline.storage import upload_resume
 
 User = get_user_model()
@@ -123,10 +123,10 @@ class OnboardingView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        # Free tier: one resume only
+        # Free tier: one resume only — proxy for onboarding completion
         if Resume.objects.filter(user=request.user).exists():
             return Response(
-                {'detail': 'You have already completed onboarding. Upgrade your plan to add more resumes.'},
+                {'detail': 'You have already completed onboarding. Upgrade your plan to add more.'},
                 status=status.HTTP_403_FORBIDDEN,
             )
 
@@ -142,22 +142,32 @@ class OnboardingView(APIView):
         with transaction.atomic():
             resume = Resume.objects.create(
                 user=request.user,
-                s3_key='',           # placeholder until upload completes
+                s3_key='',
                 filename=data['resume'].name,
                 is_default=True,
                 status='pending',
             )
 
-            cover_letter = CoverLetterTemplate.objects.create(
+            portfolio = Portfolio.objects.create(
+                user=request.user,
+                label=data.get('portfolio_label', 'My Portfolio'),
+                body=data.get('portfolio_body', ''),
+                is_default=True,
+            )
+
+            cover_letter_sample = CoverLetterSample.objects.create(
                 user=request.user,
                 label=data['cover_letter_label'],
                 body=data['cover_letter_body'],
                 is_default=True,
             )
 
-            # Free tier: one search only
-            JobSearch.objects.create(
-                user=request.user,
+            # Create Agent (singleton) then the first Search
+            # TODO: Free tier: one search only.
+            agent, _ = Agent.objects.get_or_create(user=request.user)
+
+            Search.objects.create(
+                agent=agent,
                 label=data.get('label', ''),
                 role_titles=data['role_titles'],
                 cities=data.get('cities', []),
@@ -167,11 +177,12 @@ class OnboardingView(APIView):
                 salary_min=data.get('salary_min'),
                 excluded_companies=data.get('excluded_companies', []),
                 resume=resume,
-                cover_letter_template=cover_letter,
-                daily_limit=5,
+                portfolio=portfolio,
+                cover_letter_sample=cover_letter_sample,
+                daily_target=5,
                 active=True,
             )
-        
+
         # Upload outside transaction — record exists, status tracks progress
         try:
             s3_key = upload_resume(data['resume'], request.user.id)
@@ -196,7 +207,7 @@ class RefreshView(APIView):
         refresh_token = request.COOKIES.get('refresh_token')
         if not refresh_token:
             return Response({'detail': 'No refresh token.'}, status=status.HTTP_401_UNAUTHORIZED)
-        
+
         try:
             refresh = RefreshToken(refresh_token)
             response = Response({'detail': 'Refreshed.'})

@@ -1,8 +1,8 @@
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
-from .models import Resume, CoverLetterTemplate
-from jobs.models import JobSearch
+from .models import CoverLetterSample, Portfolio, Resume
+from jobs.models import Search
 
 User = get_user_model()
 
@@ -40,20 +40,27 @@ class UserSerializer(serializers.ModelSerializer):
 class ResumeSerializer(serializers.ModelSerializer):
     class Meta:
         model = Resume
-        fields = ('id', 'filename', 'status', 'is_default', 'uploaded_at')
+        fields = ('id', 'label', 'filename', 'status', 'is_default', 'uploaded_at')
         read_only_fields = ('id', 'filename', 'is_default', 'uploaded_at')
 
 
-class CoverLetterTemplateSerializer(serializers.ModelSerializer):
+class PortfolioSerializer(serializers.ModelSerializer):
     class Meta:
-        model = CoverLetterTemplate
-        fields = ('id', 'label', 'body', 'is_default', 'created_at')
-        read_only_fields = ('id', 'is_default', 'created_at')
+        model = Portfolio
+        fields = ('id', 'label', 'body', 'is_default', 'created_at', 'updated_at')
+        read_only_fields = ('id', 'is_default', 'created_at', 'updated_at')
 
 
-class JobSearchSerializer(serializers.ModelSerializer):
+class CoverLetterSampleSerializer(serializers.ModelSerializer):
     class Meta:
-        model = JobSearch
+        model = CoverLetterSample
+        fields = ('id', 'label', 'body', 'is_default', 'created_at', 'updated_at')
+        read_only_fields = ('id', 'is_default', 'created_at', 'updated_at')
+
+
+class SearchSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Search
         fields = (
             'id',
             'label',
@@ -64,26 +71,32 @@ class JobSearchSerializer(serializers.ModelSerializer):
             'years_experience',
             'salary_min',
             'excluded_companies',
-            'daily_limit',
+            'daily_target',
+            'job_cooldown',
             'active',
+            'schedule_enabled',
             'created_at',
         )
-        read_only_fields = ('id', 'active', 'created_at')
+        read_only_fields = ('id', 'active', 'schedule_enabled', 'created_at')
 
 
 class OnboardingSerializer(serializers.Serializer):
     """
     Accepts all onboarding data in one submission:
-    resume file + cover letter + job search preferences.
+    resume file + cover letter sample + portfolio + search preferences.
     """
     # Resume
     resume = serializers.FileField()
 
-    # Cover letter
+    # Cover letter sample
     cover_letter_label = serializers.CharField(max_length=100, default='Default')
     cover_letter_body = serializers.CharField()
 
-    # Job search
+    # Portfolio (optional at onboarding — user can fill in later)
+    portfolio_label = serializers.CharField(max_length=100, default='My Portfolio', required=False)
+    portfolio_body = serializers.CharField(required=False, allow_blank=True, default='')
+
+    # Search
     label = serializers.CharField(max_length=100, required=False, default='')
     role_titles = serializers.ListField(
         child=serializers.CharField(max_length=100), min_length=1
