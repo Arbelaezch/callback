@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 
-from .models import CustomUser, Resume, CoverLetterTemplate
+from .models import CoverLetterSample, CustomUser, Portfolio, Resume
 
 
 @admin.register(CustomUser)
@@ -13,15 +13,23 @@ class CustomUserAdmin(UserAdmin):
 
 @admin.register(Resume)
 class ResumeAdmin(admin.ModelAdmin):
-    list_display = ('filename', 'user', 'is_default', 'uploaded_at')
-    list_filter = ('is_default',)
+    list_display = ('filename', 'label', 'user', 'is_default', 'status', 'uploaded_at')
+    list_filter = ('is_default', 'status')
     ordering = ('-uploaded_at',)
-    readonly_fields = ('uploaded_at',)
+    readonly_fields = ('uploaded_at', 'updated_at')
 
 
-@admin.register(CoverLetterTemplate)
-class CoverLetterTemplateAdmin(admin.ModelAdmin):
+@admin.register(Portfolio)
+class PortfolioAdmin(admin.ModelAdmin):
     list_display = ('label', 'user', 'is_default', 'created_at')
     list_filter = ('is_default',)
     ordering = ('-created_at',)
-    readonly_fields = ('created_at',)
+    readonly_fields = ('created_at', 'updated_at')
+
+
+@admin.register(CoverLetterSample)
+class CoverLetterSampleAdmin(admin.ModelAdmin):
+    list_display = ('label', 'user', 'is_default', 'created_at')
+    list_filter = ('is_default',)
+    ordering = ('-created_at',)
+    readonly_fields = ('created_at', 'updated_at')
