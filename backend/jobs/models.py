@@ -5,12 +5,37 @@ from django.contrib.postgres.fields import ArrayField
 from users.models import Resume, CoverLetterTemplate
 
 
-class JobSearch(models.Model):
+class Agent(models.Model):
     """
-    A single job search configuration. Users can have multiple
-    searches running simultaneously (gated by subscription tier).
+    Singleton per user. The central overseer — owns the master on/off switch.
+    All Searches belong to an Agent.
+    """
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='agent',
+    )
+    name = models.CharField(max_length=100, blank=True, default='My Agent')
+    active = models.BooleanField(
+        default=True,
+        help_text='Master kill switch. When false, no Searches run regardless of their own active state.',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f'{self.user.username} — {self.name}'
+
+
+class Search(models.Model):
+    """
+    A single job search configuration owned by an Agent.
+    Users can have multiple Searches running simultaneously
+    
+    Subscription tier gating.
     """
     SENIORITY_CHOICES = [
+        ('intern', 'Intern')
         ('junior', 'Junior'),
         ('mid', 'Mid'),
         ('senior', 'Senior'),
@@ -24,7 +49,7 @@ class JobSearch(models.Model):
         ('onsite', 'On-site'),
     ]
 
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='job_searches')
+    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name='searches')
     label = models.CharField(max_length=100, blank=True)  # e.g. 'Senior Django roles'
 
     # what to search for
@@ -52,22 +77,30 @@ class JobSearch(models.Model):
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name='job_searches',
+        related_name='searches',
     )
     cover_letter_template = models.ForeignKey(
         CoverLetterTemplate,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name='job_searches',
+        related_name='searches',
     )
 
     # controls
-    daily_limit = models.IntegerField(default=5)
+    daily_target = models.IntegerField(
+        default=5,
+        help_text='How many applications to aim for per day. Enforced against plan limits in business logic.',
+    )
     active = models.BooleanField(default=True)
     schedule_enabled = models.BooleanField(
         default=False,
         help_text='When enabled, this search runs automatically on the daily schedule.',
+    )
+
+    job_cooldown = models.IntegerField(
+        default=180,
+        help_text='Days before a previously seen job is eligible for application again.',
     )
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -75,25 +108,32 @@ class JobSearch(models.Model):
 
     class Meta:
         ordering = ['-created_at']
-        verbose_name_plural = 'Job Searches'
 
     def __str__(self):
-        return f'{self.user.username} — {self.label or "Job Search"}'
+        return f'{self.agent.user.username} — {self.label or "Search"}'
 
 
 class JobSeen(models.Model):
-    job_search = models.ForeignKey(JobSearch, on_delete=models.CASCADE, related_name='jobs_seen')
+    """
+    Tracks jobs seen per user (not per search) to prevent applying
+    to the same job across multiple searches.
+    Rows are not deleted — the job_cooldown window on Search controls
+    re-eligibility via a seen_at date filter.
+    """
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='jobs_seen',
+    )
     job_id = models.CharField(max_length=255)
     seen_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        # a job can be seen by the same user across different searches,
-        # but not twice within the same search
-        unique_together = ('job_search', 'job_id')
+        unique_together = ('user', 'job_id')
         ordering = ['-seen_at']
 
     def __str__(self):
-        return f'{self.job_search.user.username} — {self.job_id}'
+        return f'{self.user.username} — {self.job_id}'
 
 
 class Application(models.Model):
@@ -118,7 +158,7 @@ class Application(models.Model):
         ('unknown', 'Unknown'),
     ]
 
-    job_search = models.ForeignKey(JobSearch, on_delete=models.CASCADE, related_name='applications')
+    search = models.ForeignKey(Search, on_delete=models.CASCADE, related_name='applications')
     resume = models.ForeignKey(Resume, on_delete=models.SET_NULL, null=True, related_name='applications')
 
     # job details
@@ -148,14 +188,13 @@ class Application(models.Model):
 
     class Meta:
         ordering = ['-created_at']
-        # prevent applying to same job twice within the same search
-        unique_together = ('job_search', 'job_id')
+        unique_together = ('search', 'job_id')
 
     def __str__(self):
-        return f'{self.job_search.user.username} → {self.company} — {self.role_title} ({self.status})'
+        return f'{self.search.agent.user.username} → {self.company} — {self.role_title} ({self.status})'
 
 
-class DailyRunLog(models.Model):
+class RunLog(models.Model):
     STATUS_CHOICES = [
         ('running', 'Running'),
         ('completed', 'Completed'),
@@ -163,7 +202,7 @@ class DailyRunLog(models.Model):
         ('failed', 'Failed'),
     ]
 
-    job_search = models.ForeignKey(JobSearch, on_delete=models.CASCADE, related_name='daily_run_logs')
+    search = models.ForeignKey(Search, on_delete=models.CASCADE, related_name='run_logs')
     run_at = models.DateTimeField(auto_now_add=True)
     jobs_fetched = models.IntegerField(default=0)
     jobs_scored = models.IntegerField(default=0)
@@ -177,4 +216,4 @@ class DailyRunLog(models.Model):
         ordering = ['-run_at']
 
     def __str__(self):
-        return f'{self.job_search.user.username} — {self.run_at.date()} ({self.status})'
+        return f'{self.search.agent.user.username} — {self.run_at.date()} ({self.status})'
