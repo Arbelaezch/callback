@@ -49,8 +49,12 @@ export default function OnboardingPage() {
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
 
+  // Documents
   const [resumeFile, setResumeFile] = useState(null);
+  const [portfolioBody, setPortfolioBody] = useState('');
   const [coverLetterBody, setCoverLetterBody] = useState('');
+
+  // Search preferences
   const [roleTitles, setRoleTitles] = useState([]);
   const [cities, setCities] = useState([]);
   const [locationTypes, setLocationTypes] = useState([]);
@@ -64,16 +68,26 @@ export default function OnboardingPage() {
     setError(null);
 
     if (!resumeFile) return setError('Please upload your resume.');
-    if (!coverLetterBody.trim()) return setError('Please add a cover letter template.');
+    if (!coverLetterBody.trim()) return setError('Please add a cover letter sample.');
     if (roleTitles.length === 0) return setError('Please add at least one role title.');
 
     setLoading(true);
 
     try {
       const formData = new FormData();
+
+      // Resume
       formData.append('resume', resumeFile);
+
+      // Portfolio (optional — user can fill in more later)
+      formData.append('portfolio_label', 'My Portfolio');
+      formData.append('portfolio_body', portfolioBody);
+
+      // Cover letter sample
       formData.append('cover_letter_label', 'Default');
       formData.append('cover_letter_body', coverLetterBody);
+
+      // Search preferences
       roleTitles.forEach((t) => formData.append('role_titles', t));
       cities.forEach((c) => formData.append('cities', c));
       locationTypes.forEach((l) => formData.append('location_types', l));
@@ -109,7 +123,7 @@ export default function OnboardingPage() {
             <div className="border-b border-border pb-2">
               <h2 className="text-base font-semibold">Job search preferences</h2>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Callback will search for jobs matching these criteria daily.
+                Your agent will search for jobs matching these criteria daily.
               </p>
             </div>
 
@@ -172,7 +186,7 @@ export default function OnboardingPage() {
               </Field>
             </div>
 
-            <Field label="Exclude companies" hint="Callback will never apply to these.">
+            <Field label="Exclude companies" hint="Your agent will never apply to these.">
               <TagInput
                 id="excluded_companies"
                 value={excludedCompanies}
@@ -187,7 +201,7 @@ export default function OnboardingPage() {
             <div className="border-b border-border pb-2">
               <h2 className="text-base font-semibold">Documents</h2>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Free plan includes 1 resume and 1 cover letter template.{' '}
+                Free plan includes 1 resume, 1 portfolio, and 1 cover letter sample.{' '}
                 <span className="text-primary font-medium cursor-pointer hover:underline">
                   Upgrade for more →
                 </span>
@@ -218,8 +232,21 @@ export default function OnboardingPage() {
             </Field>
 
             <Field
-              label="Cover letter template *"
-              hint="Callback will personalise the company name, role title, and opening sentence for each application. Keep everything else as-is."
+              label="Portfolio"
+              hint="Paste your accomplishments, skills, and career highlights. The more detail you give your agent, the better it can tailor your applications. You can always add more later."
+            >
+              <textarea
+                rows={8}
+                value={portfolioBody}
+                onChange={(e) => setPortfolioBody(e.target.value)}
+                placeholder={`e.g.\n- Led a team of 5 engineers to deliver X, reducing latency by 40%\n- Built and shipped Y from scratch in 3 months\n- Proficient in Python, Django, React, PostgreSQL\n- 5 years of full-stack experience in SaaS products`}
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring resize-none"
+              />
+            </Field>
+
+            <Field
+              label="Cover letter sample *"
+              hint="Paste a cover letter written in your voice. Your agent uses this as a reference to match your tone — it won't be sent as-is."
             >
               <textarea
                 rows={10}
@@ -240,6 +267,7 @@ export default function OnboardingPage() {
           >
             {loading ? 'Setting up your account...' : 'Start applying →'}
           </button>
+
         </form>
       </div>
     </main>
