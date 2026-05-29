@@ -2,7 +2,7 @@ from django.db import models
 from django.conf import settings
 from django.contrib.postgres.fields import ArrayField
 
-from users.models import Resume, CoverLetterTemplate
+from users.models import Resume, Portfolio, CoverLetterSample
 
 
 class Agent(models.Model):
@@ -31,8 +31,7 @@ class Search(models.Model):
     """
     A single job search configuration owned by an Agent.
     Users can have multiple Searches running simultaneously
-    
-    Subscription tier gating.
+    (gated by subscription tier).
     """
     SENIORITY_CHOICES = [
         ('intern', 'Intern')
@@ -79,8 +78,15 @@ class Search(models.Model):
         blank=True,
         related_name='searches',
     )
-    cover_letter_template = models.ForeignKey(
-        CoverLetterTemplate,
+    portfolio = models.ForeignKey(
+        Portfolio,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='searches',
+    )
+    cover_letter_sample = models.ForeignKey(
+        CoverLetterSample,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -100,7 +106,7 @@ class Search(models.Model):
 
     job_cooldown = models.IntegerField(
         default=180,
-        help_text='Days before a previously seen job is eligible for application again.',
+        help_text='Days before a previously applied to job is eligible to be applied to again.',
     )
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -115,10 +121,18 @@ class Search(models.Model):
 
 class JobSeen(models.Model):
     """
-    Tracks jobs seen per user (not per search) to prevent applying
-    to the same job across multiple searches.
-    Rows are not deleted — the job_cooldown window on Search controls
-    re-eligibility via a seen_at date filter.
+    Pipeline dedup table. Records every job the user's agent has fetched
+    and processed, regardless of outcome (scored, skipped, or applied).
+
+    Scoped to the user — not the search — so the same job listing is never
+    re-fetched and re-scored across multiple Searches.
+
+    This is separate from Application, which tracks actual submissions.
+    JobSeen answers "have we processed this job before?"
+    Application answers "have we applied to this job?"
+
+    Rows are never deleted. Re-eligibility for re-processing is controlled
+    by Search.job_cooldown — the pipeline filters on seen_at >= now - cooldown.
     """
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
