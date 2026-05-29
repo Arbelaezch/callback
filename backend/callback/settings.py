@@ -129,7 +129,7 @@ USE_I18N = True
 USE_TZ = True
 
 # -----------------------------------------------------------------
-# Static files (CSS, JavaScript, images)
+# Static files
 # -----------------------------------------------------------------
 STATIC_URL = 'static/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
@@ -142,7 +142,12 @@ CELERY_RESULT_BACKEND = os.environ['CELERY_RESULT_BACKEND']
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_TIMEZONE = config.CELERY_TIMEZONE
-CELERY_BEAT_SCHEDULE = config.CELERY_BEAT_SCHEDULE
+
+# Beat schedule is DB-backed via django-celery-beat.
+# PeriodicTask entries are managed by `python manage.py sync_schedules`
+# and the JobSearchScheduleView API endpoint — never define
+# CELERY_BEAT_SCHEDULE here or it will override the database.
+CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
 
 # -----------------------------------------------------------------
 # CORS
@@ -168,13 +173,10 @@ if not DEBUG:
 # -----------------------------------------------------------------
 LLM_SCORE_THRESHOLD = config.LLM_SCORE_THRESHOLD
 AUTH_COOKIE_MAX_AGE = config.AUTH_COOKIE_MAX_AGE
-AUTH_COOKIE_MAX_AGE = AUTH_COOKIE_MAX_AGE
-
 
 # -----------------------------------------------------------------
 # Logging
 # -----------------------------------------------------------------
-
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,

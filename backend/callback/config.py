@@ -11,7 +11,6 @@ For Celery config, settings.py imports the CELERY_* values from here
 so they're picked up via app.config_from_object().
 """
 
-from celery.schedules import crontab
 
 # -----------------------------------------------------------------
 # LLM
@@ -41,17 +40,13 @@ JSEARCH_PAGE_SIZE = 10  # results per API call; JSearch max is 10
 AUTH_COOKIE_MAX_AGE = 60 * 60 * 24 * 7  # 7 days
 
 # -----------------------------------------------------------------
-# Celery beat schedule
+# Celery
 # -----------------------------------------------------------------
+
+# Beat schedule is managed entirely via django-celery-beat (DB-backed).
+# Do not define CELERY_BEAT_SCHEDULE here — it would override the DB.
+# Use `python manage.py sync_schedules` to push JobSearch state into beat.
 
 # CELERY_TIMEZONE inherits Django's TIME_ZONE ('UTC').
 # Change TIME_ZONE in settings.py to shift all scheduled tasks together.
 CELERY_TIMEZONE = 'UTC'
-
-CELERY_BEAT_SCHEDULE = {
-    'daily-job-run': {
-        'task': 'callback.tasks.daily_run',
-        # Fires at 08:00 every day in CELERY_TIMEZONE.
-        'schedule': crontab(hour=8, minute=0),
-    },
-}
