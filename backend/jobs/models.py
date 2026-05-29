@@ -34,7 +34,7 @@ class Search(models.Model):
     (gated by subscription tier).
     """
     SENIORITY_CHOICES = [
-        ('intern', 'Intern')
+        ('intern', 'Intern'),
         ('junior', 'Junior'),
         ('mid', 'Mid'),
         ('senior', 'Senior'),
