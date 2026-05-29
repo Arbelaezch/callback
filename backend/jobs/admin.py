@@ -1,15 +1,33 @@
 from django.contrib import admin, messages
 
-from .models import Application, DailyRunLog, JobSearch, JobSeen
+from pipeline.tasks.daily_run import daily_run
+from .models import Agent, Application, JobSeen, RunLog, Search
 
 
-@admin.register(JobSearch)
-class JobSearchAdmin(admin.ModelAdmin):
-    list_display = ('label', 'user', 'active', 'daily_limit', 'created_at')
+@admin.register(Agent)
+class AgentAdmin(admin.ModelAdmin):
+    list_display = ('user', 'name', 'active', 'created_at')
     list_filter = ('active',)
     ordering = ('-created_at',)
     readonly_fields = ('created_at', 'updated_at')
-    actions = ['activate_searches', 'deactivate_searches', 'trigger_daily_run']
+    actions = ['activate_agents', 'deactivate_agents']
+
+    @admin.action(description='Activate selected agents')
+    def activate_agents(self, request, queryset):
+        queryset.update(active=True)
+
+    @admin.action(description='Deactivate selected agents')
+    def deactivate_agents(self, request, queryset):
+        queryset.update(active=False)
+
+
+@admin.register(Search)
+class SearchAdmin(admin.ModelAdmin):
+    list_display = ('label', 'agent', 'active', 'schedule_enabled', 'daily_target', 'created_at')
+    list_filter = ('active', 'schedule_enabled')
+    ordering = ('-created_at',)
+    readonly_fields = ('created_at', 'updated_at')
+    actions = ['activate_searches', 'deactivate_searches', 'trigger_run']
 
     @admin.action(description='Activate selected searches')
     def activate_searches(self, request, queryset):
@@ -19,26 +37,31 @@ class JobSearchAdmin(admin.ModelAdmin):
     def deactivate_searches(self, request, queryset):
         queryset.update(active=False)
 
-    @admin.action(description='Run daily job search now')
-    def trigger_daily_run(self, request, queryset):
-        from pipeline.tasks.daily_run import daily_run
-
+    @admin.action(description='Trigger run now')
+    def trigger_run(self, request, queryset):
         triggered = 0
-        for job_search in queryset:
-            if not job_search.active:
+        for search in queryset:
+            if not search.active:
                 self.message_user(
                     request,
-                    f'Skipped "{job_search}" — inactive.',
+                    f'Skipped "{search}" — inactive.',
                     level=messages.WARNING,
                 )
                 continue
-            daily_run.delay(job_search_id=job_search.pk)
+            if not search.agent.active:
+                self.message_user(
+                    request,
+                    f'Skipped "{search}" — agent is inactive.',
+                    level=messages.WARNING,
+                )
+                continue
+            daily_run.delay(search_id=search.pk)
             triggered += 1
 
         if triggered:
             self.message_user(
                 request,
-                f'Triggered daily run for {triggered} job search(es).',
+                f'Triggered run for {triggered} search(es).',
                 level=messages.SUCCESS,
             )
 
@@ -60,9 +83,9 @@ class ApplicationAdmin(admin.ModelAdmin):
         queryset.update(status='skipped')
 
 
-@admin.register(DailyRunLog)
-class DailyRunLogAdmin(admin.ModelAdmin):
-    list_display = ('job_search', 'status', 'jobs_fetched', 'jobs_applied', 'jobs_failed', 'jobs_skipped', 'run_at')
+@admin.register(RunLog)
+class RunLogAdmin(admin.ModelAdmin):
+    list_display = ('search', 'status', 'jobs_fetched', 'jobs_applied', 'jobs_failed', 'jobs_skipped', 'run_at')
     list_filter = ('status',)
     ordering = ('-run_at',)
     readonly_fields = ('run_at', 'jobs_fetched', 'jobs_scored', 'jobs_applied', 'jobs_failed', 'jobs_skipped')
@@ -70,6 +93,6 @@ class DailyRunLogAdmin(admin.ModelAdmin):
 
 @admin.register(JobSeen)
 class JobSeenAdmin(admin.ModelAdmin):
-    list_display = ('job_id', 'job_search', 'seen_at')
+    list_display = ('job_id', 'user', 'seen_at')
     ordering = ('-seen_at',)
     readonly_fields = ('seen_at',)

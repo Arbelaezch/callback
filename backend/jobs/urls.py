@@ -1,21 +1,23 @@
 from django.urls import path
 
 from .views import (
+    AgentView,
     ChoicesView,
     ApplicationListView,
-    JobSearchListView,
-    JobSearchToggleView,
-    JobSearchTriggerView,
-    JobSearchRunLogView,
-    JobSearchScheduleView,
+    SearchListView,
+    SearchToggleView,
+    SearchTriggerView,
+    SearchRunLogView,
+    SearchScheduleView,
 )
 
 urlpatterns = [
     path('choices/', ChoicesView.as_view(), name='job_choices'),
+    path('agent/', AgentView.as_view(), name='agent'),
     path('applications/', ApplicationListView.as_view(), name='application_list'),
-    path('searches/', JobSearchListView.as_view(), name='job_search_list'),
-    path('searches/<int:pk>/toggle/', JobSearchToggleView.as_view(), name='job_search_toggle'),
-    path('searches/<int:pk>/trigger/', JobSearchTriggerView.as_view(), name='job_search_trigger'),
-    path('searches/<int:pk>/runs/', JobSearchRunLogView.as_view(), name='job_search_runs'),
-    path('searches/<int:pk>/schedule/', JobSearchScheduleView.as_view(), name='job_search_schedule'),
+    path('searches/', SearchListView.as_view(), name='search_list'),
+    path('searches/<int:pk>/toggle/', SearchToggleView.as_view(), name='search_toggle'),
+    path('searches/<int:pk>/trigger/', SearchTriggerView.as_view(), name='search_trigger'),
+    path('searches/<int:pk>/runs/', SearchRunLogView.as_view(), name='search_runs'),
+    path('searches/<int:pk>/schedule/', SearchScheduleView.as_view(), name='search_schedule'),
 ]
