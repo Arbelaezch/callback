@@ -2,57 +2,65 @@
 score_jobs — score unseen jobs via LLM and return the top N candidates.
 
 Takes the list of unseen job dicts produced by scan_jobs and runs each
-through the LLM scoring function.  Jobs below the configured score threshold
-are filtered out.  The remaining jobs are sorted descending by score and
-capped at the JobSearch's daily_limit.
+through the LLM scoring function. Jobs below the configured score threshold
+are filtered out. The remaining jobs are sorted descending by score and
+capped at the Search's daily_target.
 
 This module is intentionally free of Celery task decoration — it is called
 directly by the daily_run orchestrator so that the orchestrator controls
-retry and error-handling policy.  If you need to run scoring in isolation
+retry and error-handling policy. If you need to run scoring in isolation
 for debugging, call score_jobs() directly.
 """
 
 import logging
 
-from callback.config import LLM_SCORE_THRESHOLD
+from django.conf import settings
+
 from pipeline.llm import score_job
-from jobs.models import JobSearch
+from jobs.models import Search
 
 logger = logging.getLogger(__name__)
 
 
-def _build_profile(job_search: JobSearch) -> dict:
+def _build_profile(search: Search) -> dict:
     """
-    Build the profile dict passed to the LLM from a JobSearch instance.
+    Build the profile dict passed to the LLM from a Search instance.
 
-    Centralised here so the shape is consistent across scoring calls.
+    Centralised here so the shape is consistent across all scoring calls.
     Extend this function when the profile schema gains new fields (e.g.
-    skills list, free-text experience summary from the user model).
+    pulling from Portfolio.body once that's wired up).
+
+    Currently uses CoverLetterSample.body as an experience summary —
+    it's written in the user's voice and gives the LLM useful context.
+    When Portfolio is populated, prefer that instead as it's more
+    structured and fact-oriented.
     """
-    # Cover letter body doubles as an experience summary for now.
-    # When a dedicated experience_summary field exists on the user model,
-    # pull it in here instead.
     experience_summary = ''
-    if job_search.cover_letter_template:
-        experience_summary = job_search.cover_letter_template.body[:1000]
+    if search.cover_letter_sample:
+        experience_summary = search.cover_letter_sample.body[:1000]
+
+    # TODO: once Portfolio is reliably populated during onboarding,
+    # prefer portfolio.body here as the primary experience context.
+    # if search.portfolio:
+    #     experience_summary = search.portfolio.body[:2000]
 
     return {
-        'target_roles': job_search.role_titles,
-        'seniority_levels': job_search.seniority_levels,
-        'years_experience': job_search.years_experience,
-        'location_types': job_search.location_types,
+        'target_roles': search.role_titles,
+        'seniority_levels': search.seniority_levels,
+        'years_experience': search.years_experience,
+        'location_types': search.location_types,
         'experience_summary': experience_summary,
     }
 
 
-def score_jobs(job_search_id: int, unseen_jobs: list[dict]) -> list[dict]:
+def score_jobs(search_id: int, unseen_jobs: list[dict]) -> list[dict]:
     """
     Score a list of unseen jobs and return the top candidates.
 
     Parameters
     ----------
-    job_search_id:
-        PK of the owning JobSearch (used to load config and profile).
+    search_id:
+        PK of the owning Search (used to load config and build profile).
     unseen_jobs:
         Normalised job dicts from scan_jobs.
 
@@ -60,30 +68,33 @@ def score_jobs(job_search_id: int, unseen_jobs: list[dict]) -> list[dict]:
     -------
     list[dict]
         Jobs that passed the score threshold, sorted by score descending,
-        capped at JobSearch.daily_limit.  Each dict is the original job dict
+        capped at Search.daily_target. Each dict is the original job dict
         with two additional keys added:
-            llm_score  (int)
+            llm_score        (int)
             llm_score_reason (str)
 
     Notes
     -----
-    Scoring failures for individual jobs are caught and logged.  A single
-    bad LLM response will not abort the entire run — the job is simply
-    skipped and counted in the caller's jobs_failed counter.
+    Scoring failures for individual jobs are caught and logged. A single
+    bad LLM response will not abort the entire run — the job is marked with
+    _score_failed=True and returned so the orchestrator can count it.
     """
     if not unseen_jobs:
         return []
 
-    logger.info('score_jobs: scoring %d jobs for job_search_id=%d', len(unseen_jobs), job_search_id)
+    logger.info('score_jobs: scoring %d jobs for search_id=%d', len(unseen_jobs), search_id)
 
     try:
-        job_search = JobSearch.objects.select_related('cover_letter_template').get(pk=job_search_id)
-    except JobSearch.DoesNotExist:
-        logger.error('score_jobs: JobSearch %d not found', job_search_id)
+        search = Search.objects.select_related(
+            'cover_letter_sample',
+            'portfolio',
+        ).get(pk=search_id)
+    except Search.DoesNotExist:
+        logger.error('score_jobs: Search %d not found', search_id)
         return []
 
-    threshold = LLM_SCORE_THRESHOLD
-    profile = _build_profile(job_search)
+    threshold = settings.LLM_SCORE_THRESHOLD
+    profile = _build_profile(search)
     scored: list[dict] = []
 
     for job in unseen_jobs:
@@ -114,7 +125,7 @@ def score_jobs(job_search_id: int, unseen_jobs: list[dict]) -> list[dict]:
     # Filter by threshold, sort descending, cap at daily_limit.
     candidates = [j for j in scoreable if (j['llm_score'] or 0) >= threshold]
     candidates.sort(key=lambda j: j['llm_score'], reverse=True)
-    candidates = candidates[: job_search.daily_limit]
+    candidates = candidates[:search.daily_target]
 
     logger.info(
         'score_jobs: %d/%d jobs passed threshold %d, returning top %d candidates '

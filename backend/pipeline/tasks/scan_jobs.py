@@ -2,7 +2,7 @@
 scan_jobs — fetch new jobs from JSearch and dedup against jobs_seen.
 
 This task is responsible for:
-  1. Loading the JobSearch and validating it is still active.
+  1. Loading the Search and validating it is still active.
   2. Fetching jobs via the JSearch client.
   3. Filtering out jobs already in JobSeen for this search.
   4. Bulk-inserting new JobSeen records.
@@ -14,89 +14,66 @@ jobs that were already marked as seen.
 """
 
 import logging
+from datetime import timedelta
 
+from django.utils import timezone
+
+from jobs.models import JobSeen, Search
 from pipeline.jsearch.client import fetch_jobs
-from jobs.models import JobSearch, JobSeen
 
 logger = logging.getLogger(__name__)
 
 
-def scan_jobs(job_search_id: int, strategy: str = 'combined') -> list[dict]:
+def scan_jobs(search_id: int) -> list[dict]:
     """
-    Fetch unseen jobs for a JobSearch.
+    Fetch jobs for a Search, filter out ones the user has seen recently
+    (within search.job_cooldown days), record new ones, and return unseen jobs.
 
-    Parameters
-    ----------
-    job_search_id:
-        PK of the JobSearch to run.
-    strategy:
-        JSearch query strategy.  Passed through to ``fetch_jobs()``.
-        Defaults to 'combined'.
-
-    Returns
-    -------
-    list[dict]
-        Normalised, unseen job dicts ready for scoring.
-        Returns an empty list if the search is inactive, has no role titles,
-        or the API returns nothing.
+    JobSeen is scoped to the user — not the search — so a job seen via any
+    of the user's searches won't be returned again until the cooldown expires.
     """
-    logger.info('scan_jobs started for job_search_id=%d', job_search_id)
+    search = Search.objects.select_related('agent__user').get(pk=search_id)
+    user = search.agent.user
 
-    try:
-        job_search = JobSearch.objects.select_related('user').get(pk=job_search_id)
-    except JobSearch.DoesNotExist:
-        logger.error('scan_jobs: JobSearch %d not found', job_search_id)
+    jobs = fetch_jobs(search)
+    logger.info('scan_jobs: fetched %d jobs from JSearch', len(jobs))
+
+    if not jobs:
         return []
 
-    if not job_search.active:
-        logger.info('scan_jobs: JobSearch %d is inactive, skipping', job_search_id)
-        return []
+    job_ids = [j['job_id'] for j in jobs]
 
-    if not job_search.role_titles:
-        logger.warning('scan_jobs: JobSearch %d has no role_titles, skipping', job_search_id)
-        return []
-
-    # Fetch from JSearch.
-    raw_jobs = fetch_jobs(
-        role_titles=job_search.role_titles,
-        cities=job_search.cities,
-        location_types=job_search.location_types,
-        strategy=strategy,
+    # Dedup: find which job_ids this user has seen within the cooldown window
+    cutoff = timezone.now() - timedelta(days=search.job_cooldown)
+    recently_seen_ids = set(
+        JobSeen.objects
+        .filter(user=user, job_id__in=job_ids, seen_at__gte=cutoff)
+        .values_list('job_id', flat=True)
     )
 
-    if not raw_jobs:
-        logger.info('scan_jobs: no jobs returned from JSearch for job_search_id=%d', job_search_id)
-        return []
-
-    logger.info('scan_jobs: fetched %d jobs from JSearch', len(raw_jobs))
-
-    # Dedup: find which job_ids we've already seen for this search.
-    incoming_ids = [j['job_id'] for j in raw_jobs if j.get('job_id')]
-    already_seen = set(
-        JobSeen.objects.filter(
-            job_search=job_search,
-            job_id__in=incoming_ids,
-        ).values_list('job_id', flat=True)
-    )
-
-    unseen_jobs = [j for j in raw_jobs if j.get('job_id') and j['job_id'] not in already_seen]
-
-    if not unseen_jobs:
-        logger.info('scan_jobs: all %d fetched jobs already seen', len(raw_jobs))
-        return []
-
-    # Bulk-insert new seen records.
-    # ignore_conflicts=True makes this idempotent if somehow called twice concurrently.
-    JobSeen.objects.bulk_create(
-        [JobSeen(job_search=job_search, job_id=j['job_id']) for j in unseen_jobs],
-        ignore_conflicts=True,
-    )
-
+    unseen_jobs = [j for j in jobs if j['job_id'] not in recently_seen_ids]
     logger.info(
-        'scan_jobs: %d new jobs found (%d already seen) for job_search_id=%d',
-        len(unseen_jobs),
-        len(already_seen),
-        job_search_id,
+        'scan_jobs: %d new jobs found (%d within cooldown window) for search_id=%d',
+        len(unseen_jobs), len(recently_seen_ids), search_id,
     )
+
+    # Record all unseen jobs — ignore conflicts for jobs seen outside the window
+    # that are now re-eligible (update seen_at to now).
+    if unseen_jobs:
+        new_ids = [j['job_id'] for j in unseen_jobs]
+        # Update existing rows that are outside the window (re-eligible)
+        JobSeen.objects.filter(user=user, job_id__in=new_ids).update(seen_at=timezone.now())
+        # Insert genuinely new rows
+        existing_ids = set(
+            JobSeen.objects
+            .filter(user=user, job_id__in=new_ids)
+            .values_list('job_id', flat=True)
+        )
+        truly_new = [
+            JobSeen(user=user, job_id=jid)
+            for jid in new_ids if jid not in existing_ids
+        ]
+        if truly_new:
+            JobSeen.objects.bulk_create(truly_new, ignore_conflicts=True)
 
     return unseen_jobs
