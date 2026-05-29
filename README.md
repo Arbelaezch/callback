@@ -39,6 +39,7 @@ Host (OptiPlex)
 ├── callback/docker-compose.yml
 │   ├── django (gunicorn :8002)
 │   ├── celery worker
+│   ├── celery-beat (django-celery-beat DB scheduler)
 │   ├── redis
 │   └── postgres
 └── portfolio/docker-compose.yml
@@ -116,7 +117,7 @@ INTERNAL_API_URL=http://backend:8000        # server-side only — Next.js → D
       /(auth)
         /login           # login page
         /register        # register page
-      /dashboard         # history, pause/resume, preferences
+      /dashboard         # pipeline controls, run logs, applications
       /onboarding        # profile setup, file upload
       layout.js          # root layout — wraps app in AuthProvider
       globals.css        # global styles
@@ -138,7 +139,7 @@ INTERNAL_API_URL=http://backend:8000        # server-side only — Next.js → D
 
 /backend
   /callback              # Django project config — settings, URLs, Celery, wsgi only
-    config.py            # non-secret constants (LLM model, timeouts, beat schedule, thresholds)
+    config.py            # non-secret constants (LLM model, timeouts, thresholds)
     celery.py            # Celery app setup — autodiscovers tasks from pipeline
     db_config.py         # database config logic (dev vs prod)
     health.py            # /api/health/ endpoint
@@ -150,7 +151,7 @@ INTERNAL_API_URL=http://backend:8000        # server-side only — Next.js → D
     /tasks
       __init__.py        # imports daily_run for Celery registration
       daily_run.py       # orchestrator Celery task
-      scan_jobs.py       # JSearch fetch + dedup
+      scan_jobs.py       # JSearch fetch + dedup (user-scoped JobSeen)
       score_jobs.py      # LLM scoring + ranking
       apply_job.py       # ATS detection + Lambda dispatch (not yet implemented)
       send_digest.py     # daily digest email (not yet implemented)
@@ -164,18 +165,29 @@ INTERNAL_API_URL=http://backend:8000        # server-side only — Next.js → D
       lever.py           # Lever API client (not yet implemented)
     storage.py           # S3 helpers — dev stub, prod S3
 
-  /users                 # Django app — auth, user model, resume, cover letter
+  /users                 # Django app — auth, user model, documents
     admin.py
     authentication.py    # CookieJWTAuthentication backend
-    models.py            # CustomUser, Resume, CoverLetterTemplate
-    serializers.py       # RegisterSerializer, UserSerializer, OnboardingSerializer
-    views.py             # RegisterView, LoginView, LogoutView, MeView, OnboardingView
+    models.py            # CustomUser, Resume, Portfolio, CoverLetterSample
+    serializers.py       # RegisterSerializer, UserSerializer, ResumeSerializer,
+                         #   PortfolioSerializer, CoverLetterSampleSerializer,
+                         #   SearchSerializer, OnboardingSerializer
+    views.py             # RegisterView, LoginView, LogoutView, MeView,
+                         #   OnboardingView, RefreshView
 
-  /jobs                  # Django app — job search config, applications, run logs
-    admin.py             # includes trigger_daily_run admin action
-    models.py            # JobSearch, JobSeen, Application, DailyRunLog
-    views.py             # ChoicesView
-    urls.py              # /api/jobs/choices/
+  /jobs                  # Django app — agent, searches, applications, run logs
+    admin.py             # AgentAdmin, SearchAdmin, ApplicationAdmin,
+                         #   RunLogAdmin, JobSeenAdmin
+    models.py            # Agent, Search, JobSeen, Application, RunLog
+    serializers.py       # AgentSerializer, SearchSerializer, RunLogSerializer,
+                         #   ApplicationSerializer
+    views.py             # ChoicesView, AgentView, SearchListView, SearchToggleView,
+                         #   SearchTriggerView, SearchRunLogView, SearchScheduleView,
+                         #   ApplicationListView
+    urls.py              # /api/jobs/*
+    management/
+      commands/
+        sync_schedules.py  # syncs Search.schedule_enabled → PeriodicTask
 
   /notifications         # Django app — notification preferences + delivery (placeholder)
     models.py            # placeholder — no models yet
@@ -194,115 +206,78 @@ INTERNAL_API_URL=http://backend:8000        # server-side only — Next.js → D
 |---|---|
 | `callback` | Project config only — settings, URLs, Celery, wsgi. No models, no views. |
 | `pipeline` | All job pipeline business logic — tasks, LLM, JSearch, ATS, storage. No models. |
-| `jobs` | Job search configuration, applications, run logs. Models + views + admin. |
-| `users` | Auth, custom user model, resume, cover letter templates. Models + views. |
-| `notifications` | Notification preferences and delivery. Models placeholder — not yet implemented. |
+| `jobs` | Agent, Search configs, applications, run logs. Models + serializers + views + admin. |
+| `users` | Auth, custom user model, Resume, Portfolio, CoverLetterSample. Models + serializers + views. |
+| `notifications` | Notification preferences and delivery. Placeholder — not yet implemented. |
 
 ---
 
-## Module Interfaces
+## Database
 
-### Frontend
+```
+users (CustomUser)       -- extends AbstractUser, created_at/updated_at
 
-#### `src/lib/apiClient.js` — HTTP client
-- `apiClient.get(path)`
-- `apiClient.post(path, body)`
-- `apiClient.patch(path, body)`
-- `apiClient.delete(path)`
-- `apiClient.multipart(path, formData)` — file uploads; omits `Content-Type` so the browser sets the multipart boundary
-- Always sends `credentials: 'include'` — cookies handled automatically
-- Throws `{ status, ...detail }` on non-2xx; returns `null` on 204
+resumes                  -- user_id, label, s3_key, filename, is_default, status,
+                         --   uploaded_at, updated_at
+portfolios               -- user_id, label, body, is_default, created_at, updated_at
+cover_letter_samples     -- user_id, label, body, is_default, created_at, updated_at
 
-#### `src/lib/auth.js` — auth helpers
-- `register({ username, email, password })`
-- `login({ username, password })`
-- `logout()`
-- `getMe()` → current user object
-- All calls go through `apiClient` — no direct fetch
-- Cookie-setting is server-side; callers don't handle tokens
+agents                   -- user_id (OneToOne), name, active, created_at, updated_at
+searches                 -- agent_id, label, role_titles[], cities[], location_types[],
+                         --   seniority_levels[], years_experience, salary_min,
+                         --   excluded_companies[], resume_id, portfolio_id,
+                         --   cover_letter_sample_id, daily_target, active,
+                         --   schedule_enabled, job_cooldown, created_at, updated_at
+jobs_seen                -- user_id, job_id, seen_at
+applications             -- search_id, resume_id, job_id, job_url, company, role_title,
+                         --   location, remote_type, salary_range, job_description, source,
+                         --   status, submission_method, cover_letter_used,
+                         --   lambda_invocation_id, failure_reason, llm_score,
+                         --   llm_score_reason, applied_at, created_at
+run_logs                 -- search_id, run_at, jobs_fetched, jobs_scored, jobs_applied,
+                         --   jobs_failed, jobs_skipped, status, error
+```
 
-#### `src/hooks/onboarding/useChoices.js`
-- `useChoices()` → `{ choices, loading, error }`
-- Fetches `/api/jobs/choices/` once and caches in module scope
-- `choices` shape: `location_types`, `seniority_levels`, `application_statuses`, `submission_methods`, `remote_types` — each an array of `{ value, label }`
+`status` (resume): `pending` `ready` `failed`
+`status` (application): `pending` `submitted` `failed` `deleted` `skipped`
+`status` (run_log): `running` `completed` `partial` `failed`
+`submission_method`: `greenhouse_api` `lever_api` `browser_lambda`
 
-#### `src/contexts/AuthContext.js` — auth state
-- `AuthProvider` — wraps the app in `layout.js`; fetches `getMe()` once on mount
-- `useAuth()` → `{ user, loading, refresh, logout }`
-  - `user` — current user object or `null`
-  - `loading` — true until first `getMe()` resolves
-  - `refresh()` — re-fetches current user (call after login/register)
-  - `logout()` — calls `auth.logout()` and clears user state
-- Never call `getMe()` directly in components — use `useAuth()` instead
+---
 
-### Backend
+## Key Model Design Decisions
 
-#### `callback/config.py` — application constants
-Non-secret hardcoded constants. Import directly: `from callback.config import LLM_MODEL`.
+**`Agent`** — singleton per user. Master on/off switch (`Agent.active`). When inactive, no Searches run regardless of their own state. Holds the user's agent name.
 
-- `LLM_MODEL`, `LLM_MAX_TOKENS`, `LLM_TIMEOUT_SECONDS`
-- `LLM_SCORE_THRESHOLD` — minimum score to pass a job to the apply stage
-- `JSEARCH_HOST`, `JSEARCH_TIMEOUT_SECONDS`, `JSEARCH_PAGE_SIZE`
-- `AUTH_COOKIE_MAX_AGE` — must match `SIMPLE_JWT.REFRESH_TOKEN_LIFETIME`
-- `CELERY_TIMEZONE`, `CELERY_BEAT_SCHEDULE`
+**`Search`** — one job search configuration per agent. Multiple allowed (gated by plan). Owns `daily_target` (aspiration, enforced against plan ceiling in business logic) and `job_cooldown` (days before a seen job is eligible for re-processing — exposed to user, premium feature).
 
-#### `pipeline/storage.py`
-- `upload_resume(file, user_id: int) -> str` — returns S3 key
-- `delete_resume(s3_key: str) -> None`
-- Dev: writes to `/tmp/`. Prod: real S3. Callers behave identically in both environments.
-- Daily loop tasks must filter `resume__status='ready'` — storage does not enforce this
+**`JobSeen`** — pipeline dedup scoped to **user**, not Search. Prevents re-processing the same job listing across multiple Searches. Separate concern from `Application`: JobSeen = "have we processed this?", Application = "have we applied?". Rows never deleted — re-eligibility filtered by `seen_at >= now - job_cooldown`.
 
-#### `pipeline/llm/`
-Import via `from pipeline.llm import score_job, personalize_cover_letter`. Never import `anthropic` outside this package.
+**`Portfolio`** — free-text accomplishments/skills repository. LLM draws from this for scoring and cover letter generation. `body` field is MVP — future `PortfolioEntry` children will replace it for structured per-item input.
 
-- `score_job(job: dict, profile: dict) -> dict`
-  Returns `{ "score": int (1–10), "reason": str }`
-
-- `personalize_cover_letter(template: str, job: dict) -> str`
-  Returns full personalised cover letter text
-
-#### `pipeline/jsearch/client.py`
-- `fetch_jobs(role_titles, cities, location_types, strategy='combined') -> list[dict]`
-  - Never raises on API error — returns `[]` and logs
-  - Normalised job keys: `job_id`, `title`, `company`, `description`, `job_url`, `location`, `remote_type`, `salary_range`, `apply_link`
-  - Strategies: `'combined'` (default). Add new strategies to `_STRATEGIES` dict — see module docstring.
-
-#### `pipeline/tasks/scan_jobs.py`
-- `scan_jobs(job_search_id: int, strategy: str = 'combined') -> list[dict]`
-  Fetches, deduplicates, writes `JobSeen` records, returns unseen jobs. Idempotent.
-
-#### `pipeline/tasks/score_jobs.py`
-- `score_jobs(job_search_id: int, unseen_jobs: list[dict]) -> list[dict]`
-  Scores via LLM, filters by threshold, sorts descending, caps at `daily_limit`.
-  Scoring failures flagged with `_score_failed: True` — appended after candidates.
-
-#### `pipeline/tasks/daily_run.py`
-- `daily_run(job_search_id: int | None = None)` — Celery task
-  Pass a `job_search_id` to run one search manually; omit to run all active searches.
-  Creates and updates a `DailyRunLog` per search. Per-search failures are isolated.
-
-#### `pipeline/ats/greenhouse.py` + `lever.py`
-*(Not yet implemented)*
-- `submit(application) -> { success: bool, method: str }`
-- ATS detection logic lives in `pipeline/tasks/apply_job.py`, not in these clients
+**`CoverLetterSample`** — user's cover letter in their own voice. LLM uses for tone matching. Not submitted directly. "Sample" naming intentional — signals it's source material.
 
 ---
 
 ## Daily Loop
 
 ```
-Celery beat cron (daily, per active user)
-  → JSearch: fetch jobs by role_titles + cities + location_types
-  → Postgres: dedup against jobs_seen
-  → LLM: score each new job (1-10) vs user profile
-  → Select top N (default 5, up to daily_limit)
+Celery beat (per scheduled Search, 08:00 UTC)
+  or manual via POST /api/jobs/searches/<id>/trigger/
+  → Agent.active check (master kill switch)
+  → Search.active check
+  → JSearch fetch by role_titles + cities + location_types
+  → Dedup against JobSeen (user-scoped, filtered by Search.job_cooldown)
+  → LLM score each new job vs Search profile
+  → Select top N (capped at Search.daily_target)
   → Per job:
       → Greenhouse URL → Greenhouse API
       → Lever URL     → Lever API
       → Other         → invoke Lambda (Browser Use)
       → LLM: personalize cover letter
-      → Write to applications table
-  → Django SMTP: daily digest email
+      → Write Application record
+  → Digest email
+  → Update RunLog
 ```
 
 ---
@@ -313,7 +288,8 @@ Celery beat cron (daily, per active user)
 ```
 system: You are a job fit evaluator. Return only JSON.
 user:   Job: {title, company, description, requirements}
-        Profile: {target_roles, skills, experience_summary, remote_pref}
+        Profile: {target_roles, seniority_levels, years_experience,
+                  location_types, experience_summary}
         Return: { "score": 1-10, "reason": "string" }
 ```
 
@@ -324,6 +300,8 @@ system: Modify only: company name, role title, and one opening sentence.
 user:   Template: {cover_letter_text}
         Job: {company, role_title, brief_description}
 ```
+
+Cost: <$0.01 per application.
 
 ---
 
@@ -343,7 +321,7 @@ user:   Template: {cover_letter_text}
 }
 ```
 
-One invocation per application (fan-out). Lambda writes result back to `applications` table directly. 15 min timeout.
+One invocation per application (fan-out). Writes result back to `applications` table. 15 min timeout.
 
 **Deploy:**
 ```bash
@@ -358,42 +336,17 @@ aws lambda update-function-code \
 
 ---
 
-## Database
-
-```
-users (CustomUser)       -- extends AbstractUser, created_at/updated_at
-resumes                  -- s3_key, filename, is_default, status, user_id
-cover_letter_templates   -- label, body, is_default, user_id
-job_searches             -- role_titles[], cities[], location_types[], seniority_levels[],
-                         --   years_experience, salary_min, excluded_companies[],
-                         --   resume, cover_letter_template, daily_limit, active
-jobs_seen                -- job_search_id, job_id, seen_at
-applications             -- job_search_id, resume_id, job_id, job_url, company, role_title,
-                         --   status, submission_method, llm_score, llm_score_reason,
-                         --   cover_letter_used, lambda_invocation_id, failure_reason,
-                         --   applied_at, created_at
-daily_run_logs           -- job_search_id, run_at, jobs_fetched, jobs_scored,
-                         --   jobs_applied, jobs_failed, jobs_skipped, status, error
-```
-
-`status` (resume): `pending` `ready` `failed`
-`status` (application): `pending` `submitted` `failed` `skipped`
-`status` (daily_run_log): `running` `completed` `partial` `failed`
-`submission_method`: `greenhouse_api` `lever_api` `browser_lambda`
-
----
-
 ## Monitoring
 
-**Sentry** — add to `settings.py`:
+**Sentry:**
 ```python
 import sentry_sdk
 sentry_sdk.init(dsn=os.environ['SENTRY_DSN'], traces_sample_rate=0.2)
 ```
 
 **UptimeRobot** — monitor:
-- `https://yourcallbackdomain.com/api/health/` (Django)
-- `https://yourcallbackdomain.com` (Next.js)
+- `https://yourcallbackdomain.com/api/health/`
+- `https://yourcallbackdomain.com`
 
 ---
 
@@ -403,9 +356,7 @@ sentry_sdk.init(dsn=os.environ['SENTRY_DSN'], traces_sample_rate=0.2)
 |---|---|---|
 | Greenhouse API | URL contains `boards.greenhouse.io` | ~100% |
 | Lever API | URL contains `jobs.lever.co` | ~100% |
-| Browser Use (Lambda) | everything else | ~70-80% |
-
-Failures logged + surfaced in digest. User handles manually.
+| Browser Use (Lambda) | everything else | ~70–80% |
 
 ---
 
@@ -417,20 +368,19 @@ Failures logged + surfaced in digest. User handles manually.
   aws s3 cp - s3://callback-backups/$(date +%Y-%m-%d).sql.gz
 ```
 
-30-day retention. Cost: negligible.
-
 ---
 
 ## Roadmap
 
 **MVP**
 - [x] Django + Next.js, Dockerized
-- [x] Models + migrations
+- [x] Models + migrations (Agent, Search, JobSeen, Application, RunLog, Resume, Portfolio, CoverLetterSample)
 - [x] Auth (simplejwt + httpOnly cookies)
 - [x] Onboarding + file upload (dev stub — S3 wiring pending)
-- [x] JSearch client + fetch + dedup
+- [x] JSearch client + fetch + dedup (user-scoped JobSeen + job_cooldown)
 - [x] LLM scoring
-- [x] Celery beat cron
+- [x] Celery beat cron (DB-backed via django-celery-beat)
+- [x] Dashboard pipeline controls (Agent toggle, Search toggle, Run Now, schedule toggle, run logs)
 - [ ] Nginx host config
 - [ ] Wire up S3 for real file uploads
 - [ ] Greenhouse + Lever clients
@@ -438,14 +388,13 @@ Failures logged + surfaced in digest. User handles manually.
 - [ ] Cover letter personalization
 - [ ] Fan-out Lambda dispatch
 - [ ] Digest email (Django SMTP)
-- [ ] Dashboard
 - [ ] Sentry + UptimeRobot
 - [ ] pg_dump → S3 cron
 - [ ] Deploy
 
 **V2** — approve-before-apply (SMS), expanded boards, retry logic, Stripe
 
-**V3** — modular resume, LLM assembly, PDF generation per application
+**V3** — modular resume, LLM assembly, PDF generation per application, PortfolioEntry structured input
 
 **V4** — multi-vertical, interview prep, analytics, staging environment
 
@@ -455,7 +404,7 @@ Failures logged + surfaced in digest. User handles manually.
 
 | Service | Free tier | Paid |
 |---|---|---|
-| JSearch | ~200-500 req/mo | $10-50/mo |
+| JSearch | ~200–500 req/mo | $10–50/mo |
 | Anthropic | — | <$0.01/application |
 | AWS Lambda | 1M invocations/mo | Negligible |
 | AWS S3 | 5GB free | Pennies |
@@ -463,4 +412,4 @@ Failures logged + surfaced in digest. User handles manually.
 | UptimeRobot | 50 monitors | Free |
 | Stripe | No monthly fee | 2.9% + $0.30/txn |
 
-**Estimated MVP cost: ~$0-30 CAD/mo**
+**Estimated MVP cost: ~$0–30 CAD/mo**
