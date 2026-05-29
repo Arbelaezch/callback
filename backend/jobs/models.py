@@ -65,6 +65,10 @@ class JobSearch(models.Model):
     # controls
     daily_limit = models.IntegerField(default=5)
     active = models.BooleanField(default=True)
+    schedule_enabled = models.BooleanField(
+        default=False,
+        help_text='When enabled, this search runs automatically on the daily schedule.',
+    )
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

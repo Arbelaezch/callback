@@ -79,8 +79,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     restart: on-failure
-    # command: celery -A callback beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler # prod
-    command: celery -A callback beat --loglevel=info # dev
+    command: celery -A callback beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
     volumes:
       - ./backend:/app
     env_file:
