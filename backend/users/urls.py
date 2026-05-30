@@ -1,3 +1,6 @@
 from django.urls import path
+from .views import ResumeUploadView
 
-urlpatterns = []
+urlpatterns = [
+    path('resumes/', ResumeUploadView.as_view(), name='resume_upload'),
+]

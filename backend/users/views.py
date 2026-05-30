@@ -12,6 +12,7 @@ from .serializers import (
     RegisterSerializer,
     UserSerializer,
     OnboardingSerializer,
+    ResumeSerializer,
 )
 from .models import CoverLetterSample, Portfolio, Resume
 from jobs.models import Agent, Search
@@ -215,3 +216,45 @@ class RefreshView(APIView):
             return response
         except TokenError:
             return Response({'detail': 'Invalid refresh token.'}, status=status.HTTP_401_UNAUTHORIZED)
+
+
+class ResumeUploadView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        """List all resumes for the user."""
+        resumes = Resume.objects.filter(user=request.user)
+        return Response(ResumeSerializer(resumes, many=True).data)
+
+    def post(self, request):
+        """Upload a new resume PDF."""
+        file = request.FILES.get('resume')
+        if not file:
+            return Response({'detail': 'No file provided.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not file.name.endswith('.pdf'):
+            return Response({'detail': 'Resume must be a PDF.'}, status=status.HTTP_400_BAD_REQUEST)
+        if file.size > 5 * 1024 * 1024:
+            return Response({'detail': 'Resume must be under 5MB.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        label = request.data.get('label', '')
+
+        resume = Resume.objects.create(
+            user=request.user,
+            s3_key='',
+            filename=file.name,
+            label=label,
+            is_default=not Resume.objects.filter(user=request.user).exists(),
+            status='pending',
+        )
+
+        try:
+            s3_key = upload_resume(file, request.user.id)
+            resume.s3_key = s3_key
+            resume.status = 'ready'
+            resume.save(update_fields=['s3_key', 'status'])
+        except Exception:
+            resume.status = 'failed'
+            resume.save(update_fields=['status'])
+            return Response({'detail': 'Upload failed. Please try again.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        return Response(ResumeSerializer(resume).data, status=status.HTTP_201_CREATED)
