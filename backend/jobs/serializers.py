@@ -58,7 +58,7 @@ class SearchSerializer(serializers.ModelSerializer):
             'updated_at',
             'last_run',
         )
-        read_only_fields = ('id', 'active', 'schedule_enabled', 'created_at', 'updated_at', 'last_run')
+        read_only_fields = ('id', 'created_at', 'updated_at', 'last_run')
 
     def get_last_run(self, obj):
         runs = getattr(obj, '_latest_run_list', None)

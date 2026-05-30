@@ -129,6 +129,31 @@ class SearchListView(APIView):
         logger.debug('[SearchListView] user=%s returned %d searches', request.user.id, len(serializer.data))
         return Response(serializer.data)
 
+    def post(self, request):
+        logger.debug('[SearchListView] user=%s creating search', request.user.id)
+
+        agent, _ = Agent.objects.get_or_create(user=request.user)
+
+        serializer = SearchSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        # Auto-assign default documents if not provided
+        from users.models import Resume, Portfolio, CoverLetterSample
+        resume = Resume.objects.filter(user=request.user, is_default=True).first()
+        portfolio = Portfolio.objects.filter(user=request.user, is_default=True).first()
+        cover_letter_sample = CoverLetterSample.objects.filter(user=request.user, is_default=True).first()
+
+        search = serializer.save(
+            agent=agent,
+            resume=resume,
+            portfolio=portfolio,
+            cover_letter_sample=cover_letter_sample,
+        )
+
+        logger.info('[SearchListView] user=%s created search id=%s', request.user.id, search.id)
+        return Response(SearchSerializer(search).data, status=status.HTTP_201_CREATED)
+
 
 class SearchToggleView(APIView):
     """
