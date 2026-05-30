@@ -175,6 +175,16 @@ LLM_SCORE_THRESHOLD = config.LLM_SCORE_THRESHOLD
 AUTH_COOKIE_MAX_AGE = config.AUTH_COOKIE_MAX_AGE
 
 # -----------------------------------------------------------------
+# AWS / S3
+# -----------------------------------------------------------------
+USE_S3 = os.environ.get('USE_S3', 'False') == 'True'
+AWS_ACCESS_KEY_ID = os.environ.get('AWS_ACCESS_KEY_ID', '')
+AWS_SECRET_ACCESS_KEY = os.environ.get('AWS_SECRET_ACCESS_KEY', '')
+AWS_REGION = os.environ.get('AWS_REGION', 'us-east-1')
+AWS_S3_BUCKET = os.environ.get('AWS_S3_BUCKET', '')
+AWS_LAMBDA_FUNCTION_NAME = os.environ.get('AWS_LAMBDA_FUNCTION_NAME', '')
+
+# -----------------------------------------------------------------
 # Logging
 # -----------------------------------------------------------------
 LOGGING = {
