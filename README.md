@@ -77,6 +77,7 @@ CELERY_BROKER_URL=redis://:password@redis:6379/0
 CELERY_RESULT_BACKEND=redis://:password@redis:6379/0
 
 # AWS
+USE_S3=True
 AWS_ACCESS_KEY_ID=
 AWS_SECRET_ACCESS_KEY=
 AWS_S3_BUCKET=
@@ -381,13 +382,13 @@ sentry_sdk.init(dsn=os.environ['SENTRY_DSN'], traces_sample_rate=0.2)
 - [x] LLM scoring
 - [x] Celery beat cron (DB-backed via django-celery-beat)
 - [x] Dashboard pipeline controls (Agent toggle, Search toggle, Run Now, schedule toggle, run logs)
-- [ ] Nginx host config
-- [ ] Wire up S3 for real file uploads
+- [x] Wire up S3 for real file uploads
 - [ ] Greenhouse + Lever clients
 - [ ] Lambda (Browser Use) + deploy script
 - [ ] Cover letter personalization
 - [ ] Fan-out Lambda dispatch
 - [ ] Digest email (Django SMTP)
+- [ ] Nginx host config
 - [ ] Sentry + UptimeRobot
 - [ ] pg_dump → S3 cron
 - [ ] Deploy

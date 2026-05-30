@@ -130,7 +130,8 @@ S3
     serializers.py       # RegisterSerializer, UserSerializer, ResumeSerializer,
                          #   PortfolioSerializer, CoverLetterSampleSerializer,
                          #   SearchSerializer, OnboardingSerializer
-    views.py             # RegisterView, LoginView, LogoutView, MeView, OnboardingView, RefreshView
+    views.py             # RegisterView, LoginView, LogoutView, MeView, 
+                         # OnboardingView, RefreshView, RefreshView, ResumeUploadView
 
   /jobs                  # Django app — agent, searches, applications, run logs
     admin.py             # AgentAdmin, SearchAdmin (with trigger_run action), ApplicationAdmin,
@@ -309,7 +310,8 @@ Resume uploads use a two-phase pattern to avoid orphaned files or records:
 
 Daily loop tasks must filter `resume__status='ready'` when selecting resumes for applications.
 
-`pipeline/storage.py` currently stubs S3 — saves to `/tmp/` in dev. Replace with real boto3 calls when S3 is configured.
+`pipeline/storage.py` uses boto3 for S3 in prod (`USE_S3=True`),
+falls back to `/tmp/` in dev (`USE_S3=False`).
 
 ---
 
@@ -344,6 +346,7 @@ Free tier: one resume only (checked at onboarding entry). Upgrade prompt scaffol
 | GET | `/agent/` | Get user's agent (creates on first call) |
 | PATCH | `/agent/` | Update agent name or active state |
 | GET | `/searches/` | All searches with last run info |
+| POST | `/searches/` | Create a new search |
 | PATCH | `/searches/<id>/toggle/` | Flip Search.active |
 | POST | `/searches/<id>/trigger/` | Manually fire daily_run for a Search |
 | GET | `/searches/<id>/runs/` | Last 10 RunLog entries for a Search |
@@ -354,6 +357,12 @@ Free tier: one resume only (checked at onboarding entry). Upgrade prompt scaffol
 | Method | Path | Description |
 |---|---|---|
 | POST | `/onboarding/` | Submit all onboarding data in one request |
+
+### Users — `/api/users/`
+| Method | Path | Description |
+|---|---|---|
+| GET    | `/resumes/` | List all resumes for the user |
+| POST   | `/resumes/` | Upload a new resume PDF |
 
 ---
 
