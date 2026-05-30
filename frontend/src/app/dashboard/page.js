@@ -4,14 +4,37 @@ import { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { apiClient } from '@/lib/apiClient';
 
+import TagInput from '@/components/ui/TagInput';
+import { useChoices } from '@/hooks/onboarding/useChoices';
+
+
 export default function DashboardPage() {
   const { user } = useAuth();
+  const { choices, loading: choicesLoading } = useChoices();
 
   const [agent, setAgent] = useState(null);
   const [searches, setSearches] = useState([]);
   const [applications, setApplications] = useState([]);
   const [loadingData, setLoadingData] = useState(true);
   const [error, setError] = useState(null);
+  const [showNewSearch, setShowNewSearch] = useState(false);
+  const [newSearch, setNewSearch] = useState({
+    label: '',
+    role_titles: [],
+    cities: [],
+    location_types: [],
+    seniority_levels: [],
+    years_experience: '',
+    salary_min: '',
+    excluded_companies: [],
+    daily_target: 5,
+  });
+  const [creatingSearch, setCreatingSearch] = useState(false);
+  const [newSearchError, setNewSearchError] = useState(null);
+  const [resumes, setResumes] = useState([]);
+  const [resumeFile, setResumeFile] = useState(null);
+  const [uploadingResume, setUploadingResume] = useState(false);
+  const [resumeError, setResumeError] = useState(null);
 
   // per-search state: { [id]: { triggering, runLogs, loadingLogs, logsOpen } }
   const [searchState, setSearchState] = useState({});
@@ -27,11 +50,13 @@ export default function DashboardPage() {
       apiClient.get('/api/jobs/agent/'),
       apiClient.get('/api/jobs/searches/'),
       apiClient.get('/api/jobs/applications/'),
+      apiClient.get('/api/users/resumes/'),
     ])
-      .then(([agentData, searchData, appData]) => {
+      .then(([agentData, searchData, appData, resumeData]) => {
         setAgent(agentData);
         setSearches(searchData);
         setApplications(appData);
+        setResumes(resumeData);
       })
       .catch((err) => {
         console.error('[Dashboard] fetch error', err);
@@ -103,6 +128,52 @@ export default function DashboardPage() {
     }
   }
 
+  async function createSearch() {
+    if (newSearch.role_titles.length === 0) {
+      setNewSearchError('At least one role title is required.');
+      return;
+    }
+    setCreatingSearch(true);
+    setNewSearchError(null);
+    try {
+      await apiClient.post('/api/jobs/searches/', {
+        ...newSearch,
+        years_experience: newSearch.years_experience ? parseInt(newSearch.years_experience) : null,
+        salary_min: newSearch.salary_min ? parseInt(newSearch.salary_min) : null,
+      });
+      setShowNewSearch(false);
+      setNewSearch({
+        label: '', role_titles: [], cities: [], location_types: [],
+        seniority_levels: [], years_experience: '', salary_min: '',
+        excluded_companies: [], daily_target: 5,
+      });
+      fetchData();
+    } catch (err) {
+      setNewSearchError(err.detail || 'Failed to create search.');
+    } finally {
+      setCreatingSearch(false);
+    }
+  }
+
+  async function uploadResume() {
+    if (!resumeFile) return;
+    setUploadingResume(true);
+    setResumeError(null);
+    try {
+      const formData = new FormData();
+      formData.append('resume', resumeFile);
+      await apiClient.multipart('/api/users/resumes/', formData);
+      setResumeFile(null);
+      // reset the file input
+      document.getElementById('resume-upload').value = '';
+      fetchData();
+    } catch (err) {
+      setResumeError(err.detail || 'Upload failed.');
+    } finally {
+      setUploadingResume(false);
+    }
+  }
+
   function toggleLogs(id) {
     const current = searchState[id]?.logsOpen;
     patchSearchState(id, { logsOpen: !current });
@@ -165,18 +236,160 @@ export default function DashboardPage() {
         )}
       </section>
 
-      {/* Searches */}
+      {/* Resumes */}
       <section className="space-y-3">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-          Searches ({searches.length})
+          Resumes ({resumes.length})
         </h2>
 
+        {resumes.length > 0 && (
+          <div className="space-y-1">
+            {resumes.map((r) => (
+              <div key={r.id} className="flex items-center justify-between rounded-md border border-border bg-card px-4 py-2.5 text-sm">
+                <div className="flex items-center gap-3">
+                  <span className="font-mono text-xs text-muted-foreground">{r.filename}</span>
+                  {r.label && <span className="text-xs text-muted-foreground">— {r.label}</span>}
+                  {r.is_default && <span className="text-xs border border-blue-600 text-blue-600 rounded px-1.5 py-0.5 font-mono">default</span>}
+                </div>
+                <span className={`text-xs font-mono ${r.status === 'ready' ? 'text-green-600' : r.status === 'failed' ? 'text-destructive' : 'text-yellow-600'}`}>
+                  {r.status}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="flex items-center gap-3">
+          <input
+            id="resume-upload"
+            type="file"
+            accept=".pdf"
+            onChange={(e) => setResumeFile(e.target.files[0] || null)}
+            className="text-xs text-muted-foreground file:mr-3 file:rounded-md file:border file:border-input file:bg-background file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-foreground hover:file:bg-muted"
+          />
+          <button
+            onClick={uploadResume}
+            disabled={!resumeFile || uploadingResume}
+            className="rounded-md border border-input px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-muted disabled:opacity-40 transition-colors"
+          >
+            {uploadingResume ? 'Uploading...' : 'Upload'}
+          </button>
+        </div>
+        {resumeError && <p className="text-xs text-destructive">{resumeError}</p>}
+      </section>
+
+      {/* Searches */}
+      <section className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+            Searches ({searches.length})
+          </h2>
+          <button
+            onClick={() => { setShowNewSearch((v) => !v); setNewSearchError(null); }}
+            className="text-xs border border-input rounded-md px-3 py-1.5 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+          >
+            {showNewSearch ? '✕ Cancel' : '+ New Search'}
+          </button>
+        </div>
+
+        {/* New Search form */}
+        {showNewSearch && (
+          <div className="rounded-md border border-border bg-card p-4 space-y-4 text-sm">
+            <h3 className="font-medium">New Search</h3>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">Label</label>
+                <input
+                  type="text"
+                  value={newSearch.label}
+                  onChange={(e) => setNewSearch((p) => ({ ...p, label: e.target.value }))}
+                  placeholder="e.g. Senior Django roles"
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">Daily target</label>
+                <input
+                  type="number" min="1" max="20"
+                  value={newSearch.daily_target}
+                  onChange={(e) => setNewSearch((p) => ({ ...p, daily_target: parseInt(e.target.value) || 5 }))}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground">Role titles *</label>
+              <TagInput value={newSearch.role_titles} onChange={(v) => setNewSearch((p) => ({ ...p, role_titles: v }))} placeholder="Add a role title..." />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground">Cities</label>
+              <TagInput value={newSearch.cities} onChange={(v) => setNewSearch((p) => ({ ...p, cities: v }))} placeholder="Add a city..." />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground">Location type</label>
+              <div className="flex flex-wrap gap-2">
+                {(choices?.location_types ?? []).map(({ value: opt, label }) => {
+                  const active = newSearch.location_types.includes(opt);
+                  return (
+                    <button key={opt} type="button"
+                      onClick={() => setNewSearch((p) => ({
+                        ...p, location_types: active ? p.location_types.filter((v) => v !== opt) : [...p.location_types, opt],
+                      }))}
+                      className={`rounded-full px-3 py-1 text-xs font-medium border transition-colors ${active ? 'bg-primary text-primary-foreground border-primary' : 'bg-background text-muted-foreground border-input hover:border-primary/50'}`}
+                    >{label}</button>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground">Seniority</label>
+              <div className="flex flex-wrap gap-2">
+                {(choices?.seniority_levels ?? []).map(({ value: opt, label }) => {
+                  const active = newSearch.seniority_levels.includes(opt);
+                  return (
+                    <button key={opt} type="button"
+                      onClick={() => setNewSearch((p) => ({
+                        ...p, seniority_levels: active ? p.seniority_levels.filter((v) => v !== opt) : [...p.seniority_levels, opt],
+                      }))}
+                      className={`rounded-full px-3 py-1 text-xs font-medium border transition-colors ${active ? 'bg-primary text-primary-foreground border-primary' : 'bg-background text-muted-foreground border-input hover:border-primary/50'}`}
+                    >{label}</button>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">Years experience</label>
+                <input type="number" min="0" max="50" value={newSearch.years_experience}
+                  onChange={(e) => setNewSearch((p) => ({ ...p, years_experience: e.target.value }))}
+                  placeholder="e.g. 5"
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">Minimum salary (CAD)</label>
+                <input type="number" min="0" value={newSearch.salary_min}
+                  onChange={(e) => setNewSearch((p) => ({ ...p, salary_min: e.target.value }))}
+                  placeholder="e.g. 80000"
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground">Excluded companies</label>
+              <TagInput value={newSearch.excluded_companies} onChange={(v) => setNewSearch((p) => ({ ...p, excluded_companies: v }))} placeholder="Add a company to exclude..." />
+            </div>
+            {newSearchError && <p className="text-xs text-destructive">{newSearchError}</p>}
+            <button onClick={createSearch} disabled={creatingSearch}
+              className="rounded-md bg-primary px-4 py-2 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
+              {creatingSearch ? 'Creating...' : 'Create Search'}
+            </button>
+          </div>
+        )}
+
+        {/* Search cards */}
         {loadingData ? (
           <p className="text-sm text-muted-foreground">Loading...</p>
         ) : searches.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            No searches yet. <a href="/onboarding" className="underline">Set one up →</a>
-          </p>
+          <p className="text-sm text-muted-foreground">No searches yet — create one above.</p>
         ) : (
           <div className="space-y-2">
             {searches.map((s) => {
@@ -184,7 +397,6 @@ export default function DashboardPage() {
               const agentInactive = agent && !agent.active;
               return (
                 <div key={s.id} className="rounded-md border border-border bg-card text-sm">
-                  {/* Main row */}
                   <div className="flex items-center justify-between px-4 py-3">
                     <div className="space-y-0.5 min-w-0 flex-1 mr-4">
                       <p className="font-medium truncate">{s.label || 'Search'}</p>
@@ -195,60 +407,37 @@ export default function DashboardPage() {
                       </p>
                       {s.last_run ? (
                         <p className="text-xs text-muted-foreground">
-                          Last run:{' '}
-                          <span className="font-mono">{new Date(s.last_run.run_at).toLocaleString()}</span>
+                          Last run: <span className="font-mono">{new Date(s.last_run.run_at).toLocaleString()}</span>
                           {' · '}<RunStatusBadge status={s.last_run.status} />
                           {' · '}{s.last_run.jobs_fetched} fetched · {s.last_run.jobs_scored} scored · {s.last_run.jobs_applied} applied
-                          {s.last_run.jobs_failed > 0 && (
-                            <span className="text-destructive"> · {s.last_run.jobs_failed} failed</span>
-                          )}
+                          {s.last_run.jobs_failed > 0 && <span className="text-destructive"> · {s.last_run.jobs_failed} failed</span>}
                         </p>
                       ) : (
                         <p className="text-xs text-muted-foreground italic">Never run</p>
                       )}
                     </div>
-
-                    {/* Controls */}
                     <div className="flex items-center gap-2 shrink-0">
-                      <button
-                        onClick={() => toggleLogs(s.id)}
-                        className="rounded-md px-2.5 py-1 text-xs font-mono border border-input text-muted-foreground hover:bg-muted transition-colors"
-                      >
+                      <button onClick={() => toggleLogs(s.id)}
+                        className="rounded-md px-2.5 py-1 text-xs font-mono border border-input text-muted-foreground hover:bg-muted transition-colors">
                         {ss.logsOpen ? '▲ logs' : '▼ logs'}
                       </button>
-                      <button
-                        onClick={() => triggerRun(s.id)}
+                      <button onClick={() => triggerRun(s.id)}
                         disabled={ss.triggering || !s.active || agentInactive}
                         className="rounded-md px-3 py-1 text-xs font-medium border border-blue-600 text-blue-600 hover:bg-blue-600/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                        title={agentInactive ? 'Agent is inactive' : !s.active ? 'Search is paused' : 'Trigger a manual run'}
-                      >
+                        title={agentInactive ? 'Agent is inactive' : !s.active ? 'Search is paused' : 'Trigger a manual run'}>
                         {ss.triggering ? '…' : '▶ Run Now'}
                       </button>
-                      <button
-                        onClick={() => toggleSchedule(s.id)}
-                        className={`rounded-md px-3 py-1 text-xs font-medium border transition-colors ${
-                          s.schedule_enabled
-                            ? 'border-purple-600 text-purple-600 hover:bg-purple-600/10'
-                            : 'border-input text-muted-foreground hover:bg-muted'
-                        }`}
-                        title={s.schedule_enabled ? 'Daily schedule on' : 'Daily schedule off'}
-                      >
+                      <button onClick={() => toggleSchedule(s.id)}
+                        className={`rounded-md px-3 py-1 text-xs font-medium border transition-colors ${s.schedule_enabled ? 'border-purple-600 text-purple-600 hover:bg-purple-600/10' : 'border-input text-muted-foreground hover:bg-muted'}`}>
                         {s.schedule_enabled ? '⏰ Scheduled' : '⏰ Unscheduled'}
                       </button>
-                      <button
-                        onClick={() => toggleSearch(s.id)}
-                        className={`rounded-md px-3 py-1 text-xs font-medium border transition-colors ${
-                          s.active
-                            ? 'border-green-600 text-green-600 hover:bg-green-600/10'
-                            : 'border-input text-muted-foreground hover:bg-muted'
-                        }`}
-                      >
+                      <button onClick={() => toggleSearch(s.id)}
+                        className={`rounded-md px-3 py-1 text-xs font-medium border transition-colors ${s.active ? 'border-green-600 text-green-600 hover:bg-green-600/10' : 'border-input text-muted-foreground hover:bg-muted'}`}>
                         {s.active ? 'Active' : 'Paused'}
                       </button>
                     </div>
                   </div>
 
-                  {/* Run log drawer */}
                   {ss.logsOpen && (
                     <div className="border-t border-border px-4 py-3 bg-muted/20">
                       {ss.loadingLogs ? (
@@ -267,21 +456,13 @@ export default function DashboardPage() {
                           <tbody>
                             {ss.runLogs.map((run) => (
                               <tr key={run.id} className="border-t border-border/50">
-                                <td className="pr-4 py-1.5 text-muted-foreground whitespace-nowrap">
-                                  {new Date(run.run_at).toLocaleString()}
-                                </td>
+                                <td className="pr-4 py-1.5 text-muted-foreground whitespace-nowrap">{new Date(run.run_at).toLocaleString()}</td>
                                 <td className="pr-4 py-1.5"><RunStatusBadge status={run.status} /></td>
                                 <td className="pr-4 py-1.5">{run.jobs_fetched}</td>
                                 <td className="pr-4 py-1.5">{run.jobs_scored}</td>
                                 <td className="pr-4 py-1.5">{run.jobs_applied}</td>
-                                <td className="pr-4 py-1.5">
-                                  {run.jobs_failed > 0
-                                    ? <span className="text-destructive">{run.jobs_failed}</span>
-                                    : run.jobs_failed}
-                                </td>
-                                <td className="py-1.5 text-destructive max-w-xs truncate" title={run.error || ''}>
-                                  {run.error || '—'}
-                                </td>
+                                <td className="pr-4 py-1.5">{run.jobs_failed > 0 ? <span className="text-destructive">{run.jobs_failed}</span> : run.jobs_failed}</td>
+                                <td className="py-1.5 text-destructive max-w-xs truncate" title={run.error || ''}>{run.error || '—'}</td>
                               </tr>
                             ))}
                           </tbody>
