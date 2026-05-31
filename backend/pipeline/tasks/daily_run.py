@@ -8,7 +8,7 @@ Sequence
 2. For each search, create a RunLog with status='running'.
 3. scan_jobs  — fetch + dedup new jobs.
 4. score_jobs — LLM score + rank.
-5. apply_jobs — (stub) not yet implemented.
+5. apply_jobs — create Application records + dispatch to Lambda.
 6. Update RunLog with counts and final status.
 
 Error policy
@@ -24,6 +24,7 @@ from celery import shared_task
 from jobs.models import RunLog, Search
 from .scan_jobs import scan_jobs
 from .score_jobs import score_jobs
+from .apply_job import apply_jobs
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +49,6 @@ def _run_one_search(search: Search) -> None:
         # Stage 2: score + rank
         scored_jobs = score_jobs(search.pk, unseen_jobs)
 
-        # Count scoring failures (flagged by score_jobs).
         score_failures = [j for j in scored_jobs if j.get('_score_failed')]
         candidates = [j for j in scored_jobs if not j.get('_score_failed')]
 
@@ -56,23 +56,46 @@ def _run_one_search(search: Search) -> None:
         log.jobs_failed = len(score_failures)
         log.save(update_fields=['jobs_scored', 'jobs_failed'])
 
-        # Stage 3: apply (stub)
-        logger.info(
-            'daily_run: apply stage not yet implemented — %d candidates ready for search_id=%d',
-            len(candidates), search.pk,
-        )
-        # apply_jobs will be called here and will populate log.jobs_applied.
+        if not candidates:
+            logger.info(
+                'daily_run: no candidates above threshold for search_id=%d',
+                search.pk,
+            )
+            log.status = 'completed' if not score_failures else 'partial'
+            log.save(update_fields=['status'])
+            return
 
-        # Finalise log
-        final_status = 'failed' if len(score_failures) == len(unseen_jobs) else (
-            'partial' if score_failures else 'completed'
-        )
-        log.status = final_status
+        # Stage 3: apply
+        # TODO: insert cover letter personalisation here before apply_jobs:
+        #   candidates = personalise_cover_letters(search.pk, candidates)
+        apply_jobs(search.pk, candidates, log)
+
+        # Finalise status.
+        # apply_jobs updates log.jobs_applied / jobs_failed in place.
+        # Re-fetch to get the latest counts before deciding final status.
+        log.refresh_from_db()
+
+        total_failures = log.jobs_failed
+        total_jobs = log.jobs_fetched
+
+        if total_failures == total_jobs:
+            final_status = 'failed'
+        elif total_failures > 0:
+            final_status = 'partial'
+        else:
+            final_status = 'completed'
+
+        if log.status not in ('failed', 'partial'):
+            # Don't downgrade a status already set by apply_jobs (e.g. 'partial'
+            # set because no resume was found).
+            log.status = final_status
+
         log.save(update_fields=['status'])
 
         logger.info(
-            'daily_run: finished search_id=%d — fetched=%d scored=%d failed=%d status=%s',
-            search.pk, log.jobs_fetched, log.jobs_scored, log.jobs_failed, log.status,
+            'daily_run: finished search_id=%d — fetched=%d scored=%d applied=%d failed=%d status=%s',
+            search.pk, log.jobs_fetched, log.jobs_scored,
+            log.jobs_applied, log.jobs_failed, log.status,
         )
 
     except Exception as exc:
@@ -87,9 +110,9 @@ def daily_run(self, search_id: int | None = None) -> None:
     """
     Celery entry point.
 
-    Called by celery-beat (via PeriodicTask kwargs) and manually 
-    via SearchTriggerView. 
-    Always receives search_id — beat passes it via the PeriodicTask kwargs field, 
+    Called by celery-beat (via PeriodicTask kwargs) and manually
+    via SearchTriggerView.
+    Always receives search_id — beat passes it via the PeriodicTask kwargs field,
     trigger view passes it directly.
     """
     if search_id is not None:
