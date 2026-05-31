@@ -24,6 +24,8 @@ ALLOWED_HOSTS = (
     else [h.strip() for h in os.environ['ALLOWED_HOSTS'].split(',')]
 )
 
+CALLBACK_SECRET = os.environ['CALLBACK_SECRET']
+
 # -----------------------------------------------------------------
 # Apps & Middleware
 # -----------------------------------------------------------------
