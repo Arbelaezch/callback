@@ -37,6 +37,7 @@ ECR_REPO="${LAMBDA_FUNCTION}"
 ECR_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}"
 IMAGE_TAG="latest"
 
+
 # ---------------------------------------------------------------------------
 # Step 1: Authenticate Docker with ECR.
 # ---------------------------------------------------------------------------
