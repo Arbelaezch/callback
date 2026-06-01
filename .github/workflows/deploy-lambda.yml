@@ -1,0 +1,39 @@
+name: Deploy Lambda
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'lambda/**'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ca-central-1
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push
+        run: |
+          IMAGE_URI="379909282249.dkr.ecr.ca-central-1.amazonaws.com/callback-submit-application:latest"
+          docker build --platform linux/amd64 -t $IMAGE_URI ./lambda
+          docker push $IMAGE_URI
+
+      - name: Update Lambda function
+        run: |
+          aws lambda update-function-code \
+            --function-name callback-submit-application \
+            --image-uri 379909282249.dkr.ecr.ca-central-1.amazonaws.com/callback-submit-application:latest \
+            --region ca-central-1
