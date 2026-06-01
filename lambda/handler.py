@@ -323,4 +323,4 @@ def handler(event: dict, context) -> dict:
             Path(resume_path).unlink(missing_ok=True)
             logger.info('Cleaned up resume from /tmp/')
 
-    return {'status': status}
+    return {'status': status, 'failure_reason': failure_reason}
