@@ -179,11 +179,14 @@ AUTH_COOKIE_MAX_AGE = config.AUTH_COOKIE_MAX_AGE
 # -----------------------------------------------------------------
 # AWS / S3
 # -----------------------------------------------------------------
-USE_S3 = os.environ.get('USE_S3', 'False') == 'True'
 AWS_ACCESS_KEY_ID = os.environ.get('AWS_ACCESS_KEY_ID', '')
 AWS_SECRET_ACCESS_KEY = os.environ.get('AWS_SECRET_ACCESS_KEY', '')
-AWS_REGION = os.environ.get('AWS_REGION', 'us-east-1')
+AWS_REGION = os.environ.get('AWS_REGION', 'ca-central-1')
+
+USE_S3 = os.environ.get('USE_S3', 'False') == 'True'
 AWS_S3_BUCKET = os.environ.get('AWS_S3_BUCKET', '')
+
+USE_LAMBDA = os.environ.get('USE_LAMBDA', 'True') == 'True'
 AWS_LAMBDA_FUNCTION_NAME = os.environ.get('AWS_LAMBDA_FUNCTION_NAME', '')
 
 # -----------------------------------------------------------------
