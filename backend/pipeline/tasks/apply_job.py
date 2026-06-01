@@ -5,45 +5,42 @@ Responsibilities
 ----------------
 1. For each scored candidate job, create an Application record (status=pending).
 2. Detect the ATS from the apply URL (greenhouse / lever / other).
-3. Dispatch to Lambda (Browser Use) for submission.
-   - Greenhouse and Lever are detected and logged but also route through
-     Lambda for now — direct API submission requires the employer's API key,
-     which is not available to third-party applicants.
-     TODO: replace Lambda dispatch with GreenhouseClient / LeverClient once
-     a direct-submission path becomes available.
+3. Dispatch to Lambda (prod) or run the handler in-process (dev).
 4. Update the Application record to submitted or failed.
 5. Return counts for the RunLog.
 
+Dispatch routing
+----------------
+Controlled by settings.USE_LAMBDA:
+
+    USE_LAMBDA=True  (prod)
+        Invokes the Lambda function asynchronously via boto3.
+        Django records the invocation ID and marks the application 'submitted'.
+        Lambda writes the final result back via the callback endpoint.
+
+    USE_LAMBDA=False  (dev)
+        Calls lambda_runner.run_handler() directly in-process.
+        Runs the exact same browser-use agent locally.
+        Requires browser-use + Playwright installed in the local venv:
+            pip install browser-use playwright
+            playwright install chromium
+
 Lambda payload contract
 -----------------------
-The Lambda function (callback-submit-application) receives:
-
-    {
-        "application_id": int,       -- Application PK, written back to DB on completion
-        "job_url":        str,       -- canonical job page URL (for context / fallback nav)
-        "apply_url":      str,       -- direct apply link (Browser Use starts here)
-        "resume_url":     str,       -- presigned S3 GET URL, valid for 1 hour
-        "resume_filename": str,      -- original filename for the file input
-        "cover_letter":   str,       -- personalised cover letter text
-        "user": {
-            "first_name": str,
-            "last_name":  str,
-            "email":      str,
-        },
-        "ats":            str,       -- 'greenhouse' | 'lever' | 'other' (informational)
-    }
-
-Lambda writes the result back to the Application row directly via Django ORM
-(it has DB access through the same DATABASE_URL env var).  The invocation is
-fire-and-forget from Django's side; we record the invocation ID and treat the
-application as 'submitted' once the invoke call succeeds.
-
-Error handling
---------------
-- Lambda invoke failure  → Application status='failed', failure_reason set.
-- Resume missing / S3 error → Application status='failed', failure_reason set.
-- apply_jobs() never raises — per-application errors are caught and logged so
-  one bad job never aborts the rest of the batch.
+{
+    "application_id": int,
+    "job_url":        str,
+    "apply_url":      str,
+    "resume_url":     str,
+    "resume_filename": str,
+    "cover_letter":   str,
+    "user": {
+        "first_name": str,
+        "last_name":  str,
+        "email":      str,
+    },
+    "ats":            str,
+}
 """
 
 import json
@@ -57,7 +54,7 @@ from django.conf import settings
 from jobs.models import Application, RunLog, Search
 from users.models import Resume
 from pipeline.ats import detect_ats
-from pipeline.storage import get_resume_url  # presigned GET URL helper
+from storage.s3 import get_resume_url
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +80,6 @@ def _get_resume(search: Search) -> Resume | None:
     """
     Return the resume to use for this search.
     Prefers the search-specific resume; falls back to the user's default.
-    Returns None if the user has no usable resume.
     """
     if search.resume and search.resume.status == 'ready':
         return search.resume
@@ -101,18 +97,17 @@ def _build_lambda_payload(
     cover_letter: str,
     ats: str,
 ) -> dict:
-    """Build the payload dict sent to the Lambda function."""
+    """Build the payload dict sent to Lambda or the local handler."""
     user = application.search.agent.user
-
     resume_url = get_resume_url(resume.s3_key, expires_in=3600)
 
     return {
         'application_id': application.pk,
-        'job_url':        application.job_url,
-        'apply_url':      application.job_url,   # same until we split apply_url into Application
-        'resume_url':     resume_url,
+        'job_url':         application.job_url,
+        'apply_url':       application.job_url,
+        'resume_url':      resume_url,
         'resume_filename': resume.filename,
-        'cover_letter':   cover_letter,
+        'cover_letter':    cover_letter,
         'user': {
             'first_name': user.first_name,
             'last_name':  user.last_name,
@@ -125,18 +120,16 @@ def _build_lambda_payload(
 def _invoke_lambda(payload: dict) -> str:
     """
     Invoke the Lambda function asynchronously (Event invocation type).
-    Returns the invocation ID from the response metadata.
-    Raises BotoCoreError / ClientError on failure.
+    Returns the invocation ID. Raises on failure.
     """
     client = _lambda_client()
 
     response = client.invoke(
         FunctionName=settings.AWS_LAMBDA_FUNCTION_NAME,
-        InvocationType='Event',          # async — Lambda queues and returns 202
+        InvocationType='Event',
         Payload=json.dumps(payload),
     )
 
-    # 'Event' invocations return 202 on success.
     status_code = response.get('StatusCode', 0)
     if status_code != 202:
         raise RuntimeError(
@@ -144,8 +137,20 @@ def _invoke_lambda(payload: dict) -> str:
             f'for application_id={payload["application_id"]}'
         )
 
-    invocation_id = response.get('ResponseMetadata', {}).get('RequestId', '')
-    return invocation_id
+    return response.get('ResponseMetadata', {}).get('RequestId', '')
+
+
+def _run_local(payload: dict) -> tuple[bool, str | None]:
+    """
+    Run the handler in-process for local dev (USE_LAMBDA=False).
+    Returns (success, failure_reason).
+    """
+    from lambda_runner import run_handler
+
+    result = run_handler(payload)
+    success = result.get('status') == 'submitted'
+    failure_reason = result.get('failure_reason') if not success else None
+    return success, failure_reason
 
 
 # ---------------------------------------------------------------------------
@@ -154,22 +159,19 @@ def _invoke_lambda(payload: dict) -> str:
 
 def _apply_one(search: Search, job: dict, resume: Resume) -> bool:
     """
-    Create an Application record and dispatch to Lambda.
+    Create an Application record and dispatch to Lambda (prod) or run
+    the handler in-process (dev).
 
-    Returns True on successful dispatch, False on any failure.
-    Never raises — all errors are caught, logged, and written to the DB.
+    Returns True on successful dispatch/completion, False on any failure.
+    Never raises.
     """
-    # Resolve cover letter.  Empty string is acceptable — Lambda will submit
-    # without one if the form doesn't require it.
     cover_letter = job.get('cover_letter', '') or ''
-
-    # Detect ATS for logging and future routing.
     apply_link = job.get('apply_link') or job.get('job_url', '')
     ats = detect_ats(apply_link)
 
     if ats in ('greenhouse', 'lever'):
         logger.info(
-            'apply_one: detected %s ATS for job_id=%s — routing through Lambda '
+            'apply_one: detected %s ATS for job_id=%s — routing through browser agent '
             '(direct API submission not yet available)',
             ats, job['job_id'],
         )
@@ -180,18 +182,18 @@ def _apply_one(search: Search, job: dict, resume: Resume) -> bool:
             search=search,
             job_id=job['job_id'],
             defaults={
-                'resume':           resume,
-                'job_url':          job.get('job_url', ''),
-                'company':          job.get('company', ''),
-                'role_title':       job.get('title', ''),
-                'location':         job.get('location', ''),
-                'remote_type':      job.get('remote_type', 'unknown'),
-                'salary_range':     job.get('salary_range'),
-                'job_description':  job.get('description', ''),
+                'resume':            resume,
+                'job_url':           job.get('job_url', ''),
+                'company':           job.get('company', ''),
+                'role_title':        job.get('title', ''),
+                'location':          job.get('location', ''),
+                'remote_type':       job.get('remote_type', 'unknown'),
+                'salary_range':      job.get('salary_range'),
+                'job_description':   job.get('description', ''),
                 'submission_method': 'browser_lambda',
-                'status':           'pending',
-                'llm_score':        job.get('llm_score'),
-                'llm_score_reason': job.get('llm_score_reason'),
+                'status':            'pending',
+                'llm_score':         job.get('llm_score'),
+                'llm_score_reason':  job.get('llm_score_reason'),
                 'cover_letter_used': cover_letter,
             },
         )
@@ -203,16 +205,40 @@ def _apply_one(search: Search, job: dict, resume: Resume) -> bool:
         return False
 
     if not created:
-        # Already applied via a previous run — skip silently.
         logger.info(
             'apply_one: application already exists for job_id=%s search_id=%d, skipping',
             job['job_id'], search.pk,
         )
         return False
 
-    # Build Lambda payload and invoke.
+    # Build payload — same shape regardless of dispatch method.
     try:
         payload = _build_lambda_payload(application, resume, cover_letter, ats)
+    except Exception as exc:
+        reason = f'Failed to build payload: {exc}'
+        logger.exception('apply_one: payload build failed for job_id=%s', job['job_id'])
+        application.status = 'failed'
+        application.failure_reason = reason
+        application.save(update_fields=['status', 'failure_reason'])
+        return False
+
+    # Dispatch — Lambda in prod, in-process in dev.
+    use_lambda = getattr(settings, 'USE_LAMBDA', True)
+
+    if use_lambda:
+        return _dispatch_lambda(application, payload, job['job_id'], search.pk)
+    else:
+        return _dispatch_local(application, payload, job['job_id'], search.pk)
+
+
+def _dispatch_lambda(
+    application: Application,
+    payload: dict,
+    job_id: str,
+    search_id: int,
+) -> bool:
+    """Invoke Lambda asynchronously and mark application as submitted."""
+    try:
         invocation_id = _invoke_lambda(payload)
 
         application.lambda_invocation_id = invocation_id
@@ -223,31 +249,64 @@ def _apply_one(search: Search, job: dict, resume: Resume) -> bool:
         ])
 
         logger.info(
-            'apply_one: dispatched job_id=%s to Lambda (invocation_id=%s, ats=%s)',
-            job['job_id'], invocation_id, ats,
+            'apply_one: dispatched job_id=%s to Lambda (invocation_id=%s)',
+            job_id, invocation_id,
         )
         return True
 
     except (BotoCoreError, ClientError) as exc:
         reason = f'Lambda invoke failed: {exc}'
-        logger.error(
-            'apply_one: Lambda error for job_id=%s search_id=%d: %s',
-            job['job_id'], search.pk, reason,
-        )
     except RuntimeError as exc:
         reason = str(exc)
-        logger.error(
-            'apply_one: Lambda returned bad status for job_id=%s search_id=%d: %s',
-            job['job_id'], search.pk, reason,
-        )
     except Exception as exc:
         reason = f'Unexpected error: {exc}'
-        logger.exception(
-            'apply_one: unexpected error for job_id=%s search_id=%d',
-            job['job_id'], search.pk,
-        )
+        logger.exception('apply_one: unexpected Lambda error for job_id=%s search_id=%d', job_id, search_id)
 
-    # Mark failed.
+    application.status = 'failed'
+    application.failure_reason = reason
+    application.save(update_fields=['status', 'failure_reason'])
+    logger.error('apply_one: Lambda dispatch failed for job_id=%s: %s', job_id, reason)
+    return False
+
+
+def _dispatch_local(
+    application: Application,
+    payload: dict,
+    job_id: str,
+    search_id: int,
+) -> bool:
+    """Run the handler in-process (dev only) and update the application record."""
+    logger.info(
+        'apply_one: running handler in-process (USE_LAMBDA=False) for job_id=%s',
+        job_id,
+    )
+
+    try:
+        success, failure_reason = _run_local(payload)
+
+        if success:
+            application.status = 'submitted'
+            application.applied_at = datetime.now(tz=timezone.utc)
+            application.save(update_fields=['status', 'applied_at'])
+            logger.info('apply_one: local handler succeeded for job_id=%s', job_id)
+            return True
+        else:
+            application.status = 'failed'
+            application.failure_reason = failure_reason
+            application.save(update_fields=['status', 'failure_reason'])
+            logger.warning(
+                'apply_one: local handler failed for job_id=%s: %s',
+                job_id, failure_reason,
+            )
+            return False
+
+    except ImportError as exc:
+        reason = str(exc)
+        logger.error('apply_one: %s', reason)
+    except Exception as exc:
+        reason = f'Unexpected local handler error: {exc}'
+        logger.exception('apply_one: unexpected error for job_id=%s search_id=%d', job_id, search_id)
+
     application.status = 'failed'
     application.failure_reason = reason
     application.save(update_fields=['status', 'failure_reason'])
@@ -260,28 +319,17 @@ def _apply_one(search: Search, job: dict, resume: Resume) -> bool:
 
 def apply_jobs(search_id: int, candidates: list[dict], log: RunLog) -> None:
     """
-    Dispatch Lambda invocations for each scored candidate job.
+    Dispatch applications for each scored candidate job.
 
     Parameters
     ----------
     search_id:
         PK of the Search being processed.
     candidates:
-        Scored job dicts from score_jobs — each has llm_score, llm_score_reason,
-        and all normalised JSearch fields.  Jobs with _score_failed=True must
+        Scored job dicts from score_jobs. Jobs with _score_failed=True must
         already be filtered out by the caller (daily_run).
     log:
-        The RunLog for this run.  Updated in place with jobs_applied /
-        jobs_failed counts.
-
-    Notes
-    -----
-    - Skips the entire batch if no usable resume is found.
-    - Individual job failures never abort the rest of the batch.
-    - cover_letter personalisation is not yet implemented; the cover_letter
-      field on each job dict will be empty until that stage is added between
-      score_jobs and apply_jobs in daily_run.
-      TODO: call personalise_cover_letter() per job before this stage.
+        The RunLog for this run. Updated in place with jobs_applied / jobs_failed.
     """
     try:
         search = Search.objects.select_related(
@@ -302,6 +350,12 @@ def apply_jobs(search_id: int, candidates: list[dict], log: RunLog) -> None:
         log.save(update_fields=['status', 'error'])
         return
 
+    use_lambda = getattr(settings, 'USE_LAMBDA', True)
+    logger.info(
+        'apply_jobs: search_id=%d — %d candidates — USE_LAMBDA=%s',
+        search_id, len(candidates), use_lambda,
+    )
+
     applied = 0
     failed = 0
 
@@ -313,7 +367,7 @@ def apply_jobs(search_id: int, candidates: list[dict], log: RunLog) -> None:
             failed += 1
 
     log.jobs_applied = applied
-    log.jobs_failed = log.jobs_failed + failed   # score failures already counted
+    log.jobs_failed = log.jobs_failed + failed
     log.save(update_fields=['jobs_applied', 'jobs_failed'])
 
     logger.info(
