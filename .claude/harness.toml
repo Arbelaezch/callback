@@ -1,0 +1,36 @@
+# Harness config for Callback. Plugin defaults (providers, pricing, loop limits) live in
+# /Users/christianarbelaez/code/claude-harness/scripts/defaults.toml; anything set here overrides them for this project only.
+
+[project]
+name = "Callback"
+description = "Writes a tailored resume and cover letter for one pasted job description, in the user's voice, using a scout/writer/verifier chain of Claude agents. Next.js frontend, Django + DRF backend with Celery/Redis, WeasyPrint PDF export. The older auto-apply pipeline (JSearch scan, scoring, AWS Lambda Browser Use) is parked."
+# Extra things the reviewers should check in this codebase:
+review_focus = [
+  "every DRF view has an explicit permission class (IsAuthenticated unless AllowAny is intended) and scopes querysets to request.user, including every documents view and the scout's search and read tools",
+  "all LLM calls go through pipeline.llm, never the Anthropic SDK directly; JSON comes from call_structured (structured outputs) and nothing forces tool_choice, which current models reject; pipeline.llm never imports Django models",
+  "model output never reaches CSS or HTML unvalidated: layout values go through resolve_layout, cover letter markdown is rendered with raw HTML off, and WeasyPrint keeps the no-fetch URL fetcher",
+  "the context scout only searches ContextSource rows that belong to the requesting user and have status='ready'; nothing searches sources the user did not add",
+  "prompt or schema changes must not weaken the 'no invented facts' rules or the verifier, and need evidence from a real (non-mocked) run because the test suite mocks the LLM",
+  "model changes ship with their migration (migrations are tracked in git) and makemigrations --check is clean",
+  "uploads and anything selecting resumes use the pending -> ready pattern and filter status='ready'",
+  "frontend calls the API only via apiClient.js, loads data with useApiResource, sets state only inside promise callbacks in effects, uses Tailwind (no inline styles), no TypeScript",
+  "no secrets, hardcoded URLs, console.log, or CELERY_BEAT_SCHEDULE added",
+  "no personal files committed (docs/ holds real resumes and is gitignored)",
+  "parked code (jobs app, pipeline/tasks, lambda/, /dashboard, /onboarding) is untouched unless the task says otherwise; flag unrelated edits to it",
+]
+
+[accounts]
+claude = "personal"
+github = "Arbelaezch"
+git_email = "arbelaezch@gmail.com"  # doctor warns if a repo commits as someone else
+
+[git]
+mode = "commit"
+base_branch = "main"
+
+[repos.app]
+path = "."
+description = "Next.js (JavaScript) in frontend, Django (Python)"
+gates = [
+  { name = "tests", kind = "django", cwd = "backend", cmd = "/Users/christianarbelaez/code/personal-projects/callback/backend/env/bin/python manage.py test --noinput" },
+]
