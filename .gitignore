@@ -1,6 +1,4 @@
 
-migrations/
-
 # ========================
 # Environment
 # ========================
@@ -86,3 +84,9 @@ celerybeat-schedule.wal
 # ========================
 *.bak
 *.tmp
+
+# ========================
+# Local test inputs
+# ========================
+# Personal resumes and job descriptions used for manual testing
+docs/
