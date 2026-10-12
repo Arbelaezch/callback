@@ -21,11 +21,50 @@ from callback.config import LLM_MODEL, LLM_MAX_TOKENS, LLM_TIMEOUT_SECONDS
 logger = logging.getLogger(__name__)
 
 
-def _get_client() -> anthropic.Anthropic:
+def _get_client(timeout: int = LLM_TIMEOUT_SECONDS) -> anthropic.Anthropic:
     return anthropic.Anthropic(
         api_key=os.environ['ANTHROPIC_API_KEY'],
-        timeout=LLM_TIMEOUT_SECONDS,
+        timeout=timeout,
     )
+
+
+def call_structured(
+    *,
+    model: str,
+    system: str,
+    content: list,
+    schema: dict,
+    tool_name: str,
+    max_tokens: int,
+    timeout: int = LLM_TIMEOUT_SECONDS,
+) -> dict:
+    """
+    Call the model and return output that conforms to `schema`.
+
+    The model is forced to answer through a single tool whose input schema is
+    `schema`, so the result is already parsed JSON rather than free text.
+
+    Raises
+    ------
+    ValueError   if the response contains no tool call.
+    anthropic.*  re-raised on any Anthropic API error.
+    """
+    message = _get_client(timeout).messages.create(
+        model=model,
+        max_tokens=max_tokens,
+        system=system,
+        tools=[{
+            'name': tool_name,
+            'description': 'Record the structured result.',
+            'input_schema': schema,
+        }],
+        tool_choice={'type': 'tool', 'name': tool_name},
+        messages=[{'role': 'user', 'content': content}],
+    )
+    for block in message.content:
+        if block.type == 'tool_use' and block.name == tool_name:
+            return block.input
+    raise ValueError(f'Model returned no {tool_name} tool call')
 
 
 # ---------------------------------------------------------------------------

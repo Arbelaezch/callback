@@ -83,3 +83,16 @@ def get_resume_url(s3_key: str, expires_in: int = 3600) -> str:
     except (BotoCoreError, ClientError) as e:
         logger.exception('Failed to generate presigned URL for %s: %s', s3_key, e)
         raise
+
+
+def read_file(s3_key: str) -> bytes:
+    """Return the bytes of a stored file (from /tmp in dev)."""
+    if not settings.USE_S3:
+        return (Path('/tmp') / s3_key).read_bytes()
+
+    try:
+        obj = _s3_client().get_object(Bucket=settings.AWS_S3_BUCKET, Key=s3_key)
+        return obj['Body'].read()
+    except (BotoCoreError, ClientError) as e:
+        logger.exception('S3 read failed for key %s: %s', s3_key, e)
+        raise
