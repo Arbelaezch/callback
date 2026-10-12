@@ -60,6 +60,9 @@ Cover letter rules:
 - Markdown. Write in the user's voice, using the voice profile and its \
 excerpts as the model. It should read like them, not like a template.
 - Use the context brief for concrete, specific examples. No invented facts.
+- Write the letter fresh in the user's voice. Do not copy sentences from the \
+brief, the samples or the resume; restate the facts in new sentences. Quote \
+nothing.
 - Address the company and role specifically. No filler or cliches."""
 
 WRITER_USER = """\
@@ -87,13 +90,25 @@ Previous cover letter sample (for voice and structure, do not copy facts):
 VERIFIER_SYSTEM = (
     "You fact-check generated job application documents. A claim is "
     "supported if it appears in, or is a faithful rewording of, the original "
-    "resume or the context brief. List every claim in the generated resume "
+    "resume, the context brief, or the job posting itself (the job's company "
+    "name, role and requirements are given, not claims about the user). List every claim in the generated resume "
     "or cover letter that is NOT supported: invented employers, titles, "
-    "dates, metrics, technologies or accomplishments. Rewording, reordering "
-    "and emphasis are fine. If everything is supported, return an empty list."
+    "dates, metrics, technologies or accomplishments, and also embellished "
+    "specifics such as invented methods, activities, motivations, reasons or "
+    "outcomes that no source states (e.g. 'spent weeks profiling' when the "
+    "source only says the runtime was reduced). Be strict about concrete "
+    "details. Rewording, reordering, emphasis and generic expressions of "
+    "interest or enthusiasm are fine. If everything is supported, return an "
+    "empty list."
 )
 
 VERIFIER_USER = """\
+Job posting
+Title: {title}
+Company: {company}
+Description:
+{description}
+
 Original resume content (JSON):
 {original_json}
 

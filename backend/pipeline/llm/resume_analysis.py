@@ -35,7 +35,6 @@ def analyze_resume(pdf_bytes: bytes) -> dict:
             {'type': 'text', 'text': RESUME_ANALYSIS_USER},
         ],
         schema=RESUME_ANALYSIS_SCHEMA,
-        tool_name='record_resume_analysis',
         max_tokens=LLM_MAX_TOKENS_WRITER,
         timeout=LLM_TIMEOUT_SECONDS_LONG,
     )

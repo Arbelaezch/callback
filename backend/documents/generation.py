@@ -123,6 +123,7 @@ def generate_documents(job_posting, parsed_resume, cover_letter_sample: str = ''
         voice = get_voice_profile(user, sources, cover_letter_sample)
         written = write_documents(job, parsed_resume.content, brief, voice, cover_letter_sample)
         claims = verify_documents(
+            job,
             parsed_resume.content, brief, written['resume'], written['cover_letter_markdown'],
         )
     except Exception as exc:

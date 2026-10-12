@@ -36,7 +36,6 @@ def build_voice_profile(samples: list[str]) -> dict:
         system=VOICE_SYSTEM,
         content=[{'type': 'text', 'text': text}],
         schema=VOICE_PROFILE_SCHEMA,
-        tool_name='record_voice_profile',
         max_tokens=LLM_MAX_TOKENS,
     )
 
@@ -67,13 +66,13 @@ def write_documents(
         system=WRITER_SYSTEM,
         content=[{'type': 'text', 'text': prompt}],
         schema=GENERATION_SCHEMA,
-        tool_name='record_documents',
         max_tokens=LLM_MAX_TOKENS_WRITER,
         timeout=LLM_TIMEOUT_SECONDS_LONG,
     )
 
 
 def verify_documents(
+    job: dict,
     original_resume: dict,
     brief: dict,
     resume: dict,
@@ -81,6 +80,9 @@ def verify_documents(
 ) -> list[dict]:
     """Return [{document, claim, reason}] for claims the sources do not support."""
     prompt = VERIFIER_USER.format(
+        title=job.get('title', ''),
+        company=job.get('company', ''),
+        description=job.get('description', ''),
         original_json=json.dumps(original_resume, indent=2),
         brief_json=json.dumps(brief, indent=2),
         resume_json=json.dumps(resume, indent=2),
@@ -91,7 +93,6 @@ def verify_documents(
         system=VERIFIER_SYSTEM,
         content=[{'type': 'text', 'text': prompt}],
         schema=VERIFICATION_SCHEMA,
-        tool_name='record_verification',
         max_tokens=LLM_MAX_TOKENS_WRITER,
         timeout=LLM_TIMEOUT_SECONDS_LONG,
     )
