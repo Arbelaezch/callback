@@ -24,12 +24,22 @@ class Resume(models.Model):
         ('deleted', 'Deleted'),
     ]
 
+    PARSE_STATUS_CHOICES = [
+        ('none', 'Not analyzed'),
+        ('pending', 'Pending'),
+        ('ready', 'Ready'),
+        ('failed', 'Failed'),
+    ]
+
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='resumes')
     label = models.CharField(max_length=100, blank=True)
     s3_key = models.CharField(max_length=500)
     filename = models.CharField(max_length=255)
     is_default = models.BooleanField(default=False)
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='pending')
+    parse_status = models.CharField(max_length=10, choices=PARSE_STATUS_CHOICES, default='none')
+    parse_error = models.TextField(blank=True)
+    parse_requested_at = models.DateTimeField(null=True, blank=True)
     uploaded_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

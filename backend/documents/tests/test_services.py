@@ -42,5 +42,32 @@ class ParseResumeTests(TestCase):
         self.assertEqual(ParsedResume.objects.filter(resume=resume).count(), 1)
 
     def test_rejects_resume_that_is_not_ready(self):
+        resume = self._resume(status='pending')
         with self.assertRaises(ValueError):
-            parse_resume(self._resume(status='pending'))
+            parse_resume(resume)
+        resume.refresh_from_db()
+        self.assertEqual(resume.parse_status, 'failed')
+
+    @patch('documents.services.read_file', return_value=b'%PDF')
+    @patch('documents.services.analyze_resume', side_effect=RuntimeError('model said no'))
+    def test_parse_failure_marks_resume_failed(self, analyze, read):
+        resume = self._resume()
+        with self.assertRaises(RuntimeError):
+            parse_resume(resume)
+        resume.refresh_from_db()
+        self.assertEqual(resume.parse_status, 'failed')
+        self.assertEqual(resume.parse_error, 'model said no')
+        self.assertFalse(ParsedResume.objects.filter(resume=resume).exists())
+
+    @patch('documents.services.read_file', return_value=b'%PDF')
+    @patch('documents.services.analyze_resume', return_value=ANALYSIS)
+    def test_parse_success_marks_resume_ready(self, analyze, read):
+        resume = self._resume()
+        resume.parse_status = 'pending'
+        resume.parse_error = 'old'
+        resume.save()
+        parse_resume(resume)
+        resume.refresh_from_db()
+        self.assertEqual(resume.parse_status, 'ready')
+        self.assertEqual(resume.parse_error, '')
+

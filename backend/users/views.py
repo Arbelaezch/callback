@@ -17,6 +17,7 @@ from .serializers import (
 from .models import CoverLetterSample, Portfolio, Resume
 from jobs.models import Agent, Search
 from pipeline.storage import upload_resume
+from documents.staleness import fail_stale_parses
 
 User = get_user_model()
 
@@ -223,6 +224,7 @@ class ResumeUploadView(APIView):
 
     def get(self, request):
         """List all resumes for the user."""
+        fail_stale_parses(request.user)
         resumes = Resume.objects.filter(user=request.user)
         return Response(ResumeSerializer(resumes, many=True).data)
 

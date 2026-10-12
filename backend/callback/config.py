@@ -70,3 +70,12 @@ AUTH_COOKIE_MAX_AGE = 60 * 60 * 24 * 7  # 7 days
 # CELERY_TIMEZONE inherits Django's TIME_ZONE ('UTC').
 # Change TIME_ZONE in settings.py to shift all scheduled tasks together.
 CELERY_TIMEZONE = 'UTC'
+
+
+# -----------------------------------------------------------------
+# Background task timeouts
+# -----------------------------------------------------------------
+
+# Pending rows older than this are treated as lost, because the worker died.
+PARSE_STALE_AFTER_MINUTES = 10
+GENERATION_STALE_AFTER_MINUTES = 20

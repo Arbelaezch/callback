@@ -8,6 +8,7 @@ import DocumentWorkspace from '@/components/documents/DocumentWorkspace';
 import { secondaryButtonClass } from '@/components/ui/styles';
 
 const POLL_MS = 3000;
+const GENERATION_POLL_TIMEOUT_MS = 5 * 60 * 1000;
 const TABS = [
   { kind: 'resume', label: 'Resume' },
   { kind: 'cover_letter', label: 'Cover letter' },
@@ -25,17 +26,23 @@ export default function JobPage() {
   const [tab, setTab] = useState('resume');
   const [error, setError] = useState(null);
   const [regenerating, setRegenerating] = useState(false);
+  const [timedOut, setTimedOut] = useState(false);
 
   const documents = job.data?.documents || [];
-  const isPending = documents.some((d) => d.status === 'pending');
+  // Only the current version of each kind counts; superseded pending rows are ignored.
+  const isPending = TABS.some(({ kind }) => latestOfKind(documents, kind)?.status === 'pending');
   const current = latestOfKind(documents, tab);
   const reloadJob = job.reload;
 
   useEffect(() => {
-    if (!isPending) return undefined;
-    const timer = setInterval(reloadJob, POLL_MS);
-    return () => clearInterval(timer);
-  }, [isPending, reloadJob]);
+    if (!isPending || timedOut) return undefined;
+    const poll = setInterval(reloadJob, POLL_MS);
+    const stop = setTimeout(() => setTimedOut(true), GENERATION_POLL_TIMEOUT_MS);
+    return () => {
+      clearInterval(poll);
+      clearTimeout(stop);
+    };
+  }, [isPending, timedOut, reloadJob]);
 
   async function regenerate() {
     const resumeId = parsed.data?.[0]?.resume;
@@ -47,6 +54,7 @@ export default function JobPage() {
       return undefined;
     }
     setError(null);
+    setTimedOut(false);
     setRegenerating(true);
     try {
       await apiClient.post(`/api/documents/jobs/${id}/generate/`, { resume_id: resumeId });
@@ -81,7 +89,7 @@ export default function JobPage() {
           <button
             type="button"
             onClick={regenerate}
-            disabled={regenerating || isPending}
+            disabled={regenerating || (isPending && !timedOut)}
             className={secondaryButtonClass}
           >
             Generate again
@@ -112,7 +120,12 @@ export default function JobPage() {
             Nothing generated yet. Use “Generate again” to start.
           </p>
         )}
-        {current?.status === 'pending' && (
+        {current?.status === 'pending' && timedOut && (
+          <p className="text-sm text-muted-foreground">
+            This is taking longer than expected. You can generate again.
+          </p>
+        )}
+        {current?.status === 'pending' && !timedOut && (
           <p className="text-sm text-muted-foreground">
             Writing your {tab === 'resume' ? 'resume' : 'cover letter'}. This usually takes under a minute.
           </p>
