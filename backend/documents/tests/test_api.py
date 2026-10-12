@@ -128,3 +128,48 @@ class JobAndGenerationTests(ApiTestCase):
     def test_cannot_read_foreign_document(self):
         doc = GeneratedDocument.objects.create(job_posting=self._job(self.other), kind='resume')
         self.assertEqual(self.client.get(f'/api/documents/documents/{doc.pk}/').status_code, 404)
+
+
+class RenderEndpointTests(ApiTestCase):
+    def _doc(self, user=None, kind='resume', status='ready'):
+        job = JobPosting.objects.create(
+            user=user or self.user, title='Engineer', company='Acme', description='x',
+        )
+        return GeneratedDocument.objects.create(
+            job_posting=job, kind=kind, status=status,
+            content={'header': {'name': 'Ada'}, 'summary': 'Hello', 'experience': [],
+                     'education': [], 'skills': []},
+            markdown='Dear team',
+        )
+
+    def test_export_returns_pdf_with_page_count(self):
+        doc = self._doc()
+        response = self.client.get(f'/api/documents/documents/{doc.pk}/export/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['Content-Type'], 'application/pdf')
+        self.assertTrue(response.content.startswith(b'%PDF'))
+        self.assertEqual(response['X-Page-Count'], '1')
+        self.assertIn('resume.pdf', response['Content-Disposition'])
+
+    def test_cover_letter_export_and_preview(self):
+        doc = self._doc(kind='cover_letter')
+        self.assertIn('cover-letter.pdf', self.client.get(f'/api/documents/documents/{doc.pk}/export/')['Content-Disposition'])
+        preview = self.client.get(f'/api/documents/documents/{doc.pk}/preview/')
+        self.assertIn('text/html', preview['Content-Type'])
+        self.assertIn('Dear team', preview.content.decode())
+
+    def test_not_ready_and_foreign_documents_are_refused(self):
+        pending = self._doc(status='pending')
+        foreign = self._doc(user=self.other)
+        self.assertEqual(self.client.get(f'/api/documents/documents/{pending.pk}/export/').status_code, 409)
+        self.assertEqual(self.client.get(f'/api/documents/documents/{foreign.pk}/export/').status_code, 404)
+        self.assertEqual(self.client.get(f'/api/documents/documents/{foreign.pk}/preview/').status_code, 404)
+
+    def test_export_reflects_user_edits(self):
+        doc = self._doc()
+        self.client.patch(f'/api/documents/documents/{doc.pk}/', {
+            'content': {'header': {'name': 'Ada'}, 'summary': 'Edited summary', 'experience': [],
+                        'education': [], 'skills': []},
+        }, format='json')
+        preview = self.client.get(f'/api/documents/documents/{doc.pk}/preview/')
+        self.assertIn('Edited summary', preview.content.decode())

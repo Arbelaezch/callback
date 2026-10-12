@@ -135,14 +135,17 @@ def generate_documents(job_posting, parsed_resume, cover_letter_sample: str = ''
         raise
 
     resume_doc.content = written['resume']
+    resume_doc.layout = parsed_resume.layout
     resume_doc.unsupported_claims = [c for c in claims if c['document'] == 'resume']
     resume_doc.status = 'ready'
-    resume_doc.save(update_fields=['content', 'unsupported_claims', 'status'])
+    resume_doc.save(update_fields=['content', 'layout', 'unsupported_claims', 'status'])
 
+    letter_doc.content = {'header': parsed_resume.content.get('header', {})}
+    letter_doc.layout = parsed_resume.layout
     letter_doc.markdown = written['cover_letter_markdown']
     letter_doc.unsupported_claims = [c for c in claims if c['document'] == 'cover_letter']
     letter_doc.status = 'ready'
-    letter_doc.save(update_fields=['markdown', 'unsupported_claims', 'status'])
+    letter_doc.save(update_fields=['content', 'layout', 'markdown', 'unsupported_claims', 'status'])
 
     logger.info('Generated documents for job posting %s (%d flagged claims)', job_posting.pk, len(claims))
     return resume_doc, letter_doc

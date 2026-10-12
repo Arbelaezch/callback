@@ -1,5 +1,6 @@
 import os
 
+from django.http import HttpResponse
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -10,6 +11,7 @@ from pipeline.storage import delete_resume, upload_context_document
 from users.models import Resume
 
 from .models import ContextSource, GeneratedDocument, JobPosting, ParsedResume
+from .rendering import html_to_pdf, render_cover_letter_html, render_resume_html
 from .serializers import (
     ContextSourceSerializer,
     GeneratedDocumentSerializer,
@@ -170,3 +172,52 @@ class GeneratedDocumentView(APIView):
         serializer.is_valid(raise_exception=True)
         serializer.save(edited=True)
         return Response(serializer.data)
+
+
+def _document_html(document) -> str:
+    if document.kind == 'resume':
+        return render_resume_html(document.content, document.layout)
+    return render_cover_letter_html(
+        document.markdown, (document.content or {}).get('header'), document.layout,
+    )
+
+
+class _RenderedDocumentView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get_ready_document(self, request, document_id):
+        """Return (document, None) or (None, error Response)."""
+        document = GeneratedDocument.objects.filter(
+            pk=document_id, job_posting__user=request.user,
+        ).first()
+        if document is None:
+            return None, Response({'detail': 'Document not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if document.status != 'ready':
+            return None, Response({'detail': 'Document is not ready.'}, status=status.HTTP_409_CONFLICT)
+        return document, None
+
+
+class DocumentPreviewView(_RenderedDocumentView):
+    """The document as HTML, for the editor's live preview."""
+
+    def get(self, request, document_id):
+        document, error = self.get_ready_document(request, document_id)
+        if error:
+            return error
+        return HttpResponse(_document_html(document), content_type='text/html; charset=utf-8')
+
+
+class DocumentExportView(_RenderedDocumentView):
+    """The document as a PDF download. X-Page-Count lets the UI warn about overflow."""
+
+    def get(self, request, document_id):
+        document, error = self.get_ready_document(request, document_id)
+        if error:
+            return error
+        pdf, pages = html_to_pdf(_document_html(document))
+        name = 'resume' if document.kind == 'resume' else 'cover-letter'
+        response = HttpResponse(pdf, content_type='application/pdf')
+        response['Content-Disposition'] = f'attachment; filename="{name}.pdf"'
+        response['X-Page-Count'] = str(pages)
+        response['Access-Control-Expose-Headers'] = 'X-Page-Count'
+        return response

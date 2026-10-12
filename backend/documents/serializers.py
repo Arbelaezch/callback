@@ -21,11 +21,11 @@ class GeneratedDocumentSerializer(serializers.ModelSerializer):
     class Meta:
         model = GeneratedDocument
         fields = [
-            'id', 'job_posting', 'kind', 'status', 'content', 'markdown',
+            'id', 'job_posting', 'kind', 'status', 'content', 'layout', 'markdown',
             'unsupported_claims', 'version', 'edited', 'error', 'created_at', 'updated_at',
         ]
         read_only_fields = [
-            'id', 'job_posting', 'kind', 'status', 'unsupported_claims',
+            'id', 'job_posting', 'kind', 'status', 'layout', 'unsupported_claims',
             'version', 'edited', 'error', 'created_at', 'updated_at',
         ]
 

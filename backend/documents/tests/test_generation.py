@@ -38,6 +38,15 @@ class GenerateDocumentsTests(TestCase):
         self.assertEqual(letter_doc.markdown, 'Dear Acme')
         self.assertEqual(letter_doc.unsupported_claims, CLAIMS)
 
+    def test_documents_snapshot_layout_and_letterhead(self):
+        self.parsed.layout = {'font_family': 'Georgia'}
+        self.parsed.content = {**RESUME, 'header': {'name': 'Ada'}}
+        self.parsed.save()
+        (resume_doc, letter_doc), *_ = self._run()
+        self.assertEqual(resume_doc.layout, {'font_family': 'Georgia'})
+        self.assertEqual(letter_doc.layout, {'font_family': 'Georgia'})
+        self.assertEqual(letter_doc.content, {'header': {'name': 'Ada'}})
+
     def test_scout_gets_no_handlers_without_sources(self):
         _, run_scout, *_ = self._run()
         self.assertEqual(run_scout.call_args.args[2], {})

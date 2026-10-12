@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{ header.name }} – Cover letter</title>
+<style>{{ css|safe }}</style>
+</head>
+<body>
+<header>
+  <h1>{{ header.name }}</h1>
+  <p class="contact">{% if header.email %}{{ header.email }}{% endif %}{% if header.phone %} · {{ header.phone }}{% endif %}{% if header.location %} · {{ header.location }}{% endif %}</p>
+</header>
+<div class="letter-body">{{ body_html|safe }}</div>
+</body>
+</html>

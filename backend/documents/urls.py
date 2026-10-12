@@ -1,6 +1,8 @@
 from django.urls import path
 
 from .views import (
+    DocumentExportView,
+    DocumentPreviewView,
     ContextSourceDetailView,
     ContextSourceListView,
     GeneratedDocumentView,
@@ -18,4 +20,6 @@ urlpatterns = [
     path('jobs/<int:job_id>/', JobPostingDetailView.as_view(), name='job-detail'),
     path('jobs/<int:job_id>/generate/', GenerateView.as_view(), name='job-generate'),
     path('documents/<int:document_id>/', GeneratedDocumentView.as_view(), name='document-detail'),
+    path('documents/<int:document_id>/preview/', DocumentPreviewView.as_view(), name='document-preview'),
+    path('documents/<int:document_id>/export/', DocumentExportView.as_view(), name='document-export'),
 ]

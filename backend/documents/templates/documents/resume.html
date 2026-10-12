@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{ header.name }} – Resume</title>
+<style>{{ css|safe }}</style>
+</head>
+<body>
+<header>
+  <h1>{{ header.name }}</h1>
+  {% if header.headline %}<p class="headline">{{ header.headline }}</p>{% endif %}
+  <p class="contact">{% if header.email %}{{ header.email }}{% endif %}{% if header.phone %} · {{ header.phone }}{% endif %}{% if header.location %} · {{ header.location }}{% endif %}{% for link in header.links %} · {{ link }}{% endfor %}</p>
+</header>
+
+{% for key in layout.section_order %}
+  {% if key == "summary" and content.summary %}
+  <section><h2>Summary</h2><p>{{ content.summary }}</p></section>
+  {% elif key == "experience" and content.experience %}
+  <section><h2>Experience</h2>
+    {% for job in content.experience %}
+    <div class="entry">
+      <div class="entry-head"><span>{{ job.company }}{% if job.location %}, {{ job.location }}{% endif %}</span>
+        <span class="dates">{{ job.start }}{% if job.start and job.end %} – {% endif %}{{ job.end }}</span></div>
+      <div class="entry-sub">{{ job.title }}</div>
+      {% if job.bullets %}<ul>{% for b in job.bullets %}<li>{{ b }}</li>{% endfor %}</ul>{% endif %}
+    </div>
+    {% endfor %}
+  </section>
+  {% elif key == "projects" and content.projects %}
+  <section><h2>Projects</h2>
+    {% for project in content.projects %}
+    <div class="entry">
+      <div class="entry-head"><span>{{ project.name }}</span>{% if project.link %}<span class="dates">{{ project.link }}</span>{% endif %}</div>
+      {% if project.bullets %}<ul>{% for b in project.bullets %}<li>{{ b }}</li>{% endfor %}</ul>{% endif %}
+    </div>
+    {% endfor %}
+  </section>
+  {% elif key == "education" and content.education %}
+  <section><h2>Education</h2>
+    {% for school in content.education %}
+    <div class="entry">
+      <div class="entry-head"><span>{{ school.school }}</span>
+        <span class="dates">{{ school.start }}{% if school.start and school.end %} – {% endif %}{{ school.end }}</span></div>
+      {% if school.degree %}<div class="entry-sub">{{ school.degree }}</div>{% endif %}
+      {% if school.details %}<ul>{% for d in school.details %}<li>{{ d }}</li>{% endfor %}</ul>{% endif %}
+    </div>
+    {% endfor %}
+  </section>
+  {% elif key == "skills" and content.skills %}
+  <section><h2>Skills</h2>
+    {% for group in content.skills %}
+    <p class="skill-row">{% if group.category %}<strong>{{ group.category }}:</strong> {% endif %}{{ group.items|join:", " }}</p>
+    {% endfor %}
+  </section>
+  {% endif %}
+{% endfor %}
+</body>
+</html>

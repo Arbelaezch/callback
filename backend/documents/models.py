@@ -113,8 +113,8 @@ class JobPosting(models.Model):
 class GeneratedDocument(models.Model):
     """
     A tailored resume or cover letter for a JobPosting. Resume content is
-    JSON in the same shape as ParsedResume.content; cover letter content is
-    markdown. `unsupported_claims` holds the verifier's flags for the editor.
+    JSON in the same shape as ParsedResume.content; a cover letter keeps its
+    letterhead in `content['header']` and its text in `markdown`. `unsupported_claims` holds the verifier's flags for the editor.
     """
     KIND_CHOICES = [
         ('resume', 'Resume'),
@@ -130,6 +130,10 @@ class GeneratedDocument(models.Model):
     kind = models.CharField(max_length=15, choices=KIND_CHOICES)
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='pending')
     content = models.JSONField(default=dict, blank=True)
+    layout = models.JSONField(
+        default=dict, blank=True,
+        help_text='Snapshot of the resume layout at generation time, used for PDF export.',
+    )
     markdown = models.TextField(blank=True)
     unsupported_claims = models.JSONField(default=list, blank=True)
     version = models.PositiveIntegerField(default=1)
