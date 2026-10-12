@@ -20,6 +20,14 @@ LLM_MODEL = 'claude-sonnet-4-20250514'
 LLM_MAX_TOKENS = 1024
 LLM_TIMEOUT_SECONDS = 30
 
+# Document generation stages. Each stage has its own model so they can be
+# swapped independently: a light model gathers context and verifies claims,
+# a stronger model writes.
+LLM_MODEL_SCOUT = 'claude-haiku-4-5-20251001'
+LLM_MODEL_WRITER = 'claude-sonnet-5-5'
+LLM_MODEL_VERIFIER = 'claude-haiku-4-5-20251001'
+LLM_MAX_TOKENS_WRITER = 8192
+
 # Jobs below this score are filtered out before the apply stage.
 LLM_SCORE_THRESHOLD = 7
 

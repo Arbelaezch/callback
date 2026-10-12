@@ -47,6 +47,7 @@ INSTALLED_APPS = [
     # local
     'users',
     'jobs',
+    'documents',
     'pipeline',
     'notifications',
 ]
