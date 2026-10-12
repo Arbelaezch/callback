@@ -25,7 +25,7 @@ class CallStructuredTests(SimpleTestCase):
         result, kwargs = self._call(message())
         self.assertEqual(result, {'a': 1})
         self.assertNotIn('tool_choice', kwargs)
-        fmt = kwargs['extra_body']['output_config']['format']
+        fmt = kwargs['output_config']['format']
         self.assertEqual(fmt['type'], 'json_schema')
         self.assertFalse(fmt['schema']['additionalProperties'])
 

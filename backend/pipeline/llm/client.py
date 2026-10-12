@@ -71,8 +71,7 @@ def call_structured(
         model=model,
         max_tokens=max_tokens,
         system=system,
-        # extra_body: the pinned SDK predates the output_config parameter.
-        extra_body={'output_config': {'format': {'type': 'json_schema', 'schema': _strict_schema(schema)}}},
+        output_config={'format': {'type': 'json_schema', 'schema': _strict_schema(schema)}},
         messages=[{'role': 'user', 'content': content}],
     )
     if message.stop_reason == 'refusal':
