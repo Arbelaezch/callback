@@ -1,94 +1,72 @@
 # Project Status
 
-Checked against the code, not just `tasklist.md`. `tasklist.md` is behind in places and still uses old names (`UserPreferences`, `JobSearch`, `CoverLetterTemplate`).
+Last updated 2026-10-12, on branch `feature/tailored-documents` (15 commits ahead of `main`, not merged or pushed).
 
-Verified by reading the code only. The app and tests were not run.
+## Direction
 
-## Done and working in code
+Callback pivoted from "auto-apply to jobs for you" to **"write a tailored resume and cover letter for one job"**: the user supplies a resume, a cover letter sample, optional supporting documents and a pasted job description; the AI writes both documents in the user's voice; the user edits them in the app and downloads PDFs. Browser automation is parked and comes back later as an apply step.
 
-**Foundation and models**
-- Docker Compose stack: db, redis, backend, celery, celery-beat, frontend, plus a prod override file.
-- Migrations exist for `users` and `jobs`.
-- Models: `CustomUser`, `Resume`, `Portfolio`, `CoverLetterSample`, `Agent`, `Search`, `JobSeen`, `Application`, `RunLog`.
-- All models registered in admin.
-- CORS configured.
+Design rationale and decisions are in `AGENTS.md` ("Document generation").
 
-**Auth**
-- simplejwt with httpOnly cookies, refresh and logout.
-- Register, login and `me` endpoints.
-- Frontend: login and register pages, `AuthContext`, `proxy.js` route protection, silent token refresh in `apiClient.js`.
+## How this was verified
 
-**Onboarding and uploads**
-- Atomic `/api/onboarding/` endpoint and resume upload endpoint (`ResumeUploadView`).
-- `storage.py` with upload, delete and presigned `get_resume_url`.
-- Onboarding page.
+- Backend: 63 tests pass (`cd backend && env/bin/python manage.py test --noinput`). The LLM is mocked in them.
+- **Live API:** a throwaway resume PDF, notes file and job description were run through parse, scout, writer and verifier against the real Anthropic API, on SDK 1.13.0. Parse took about 12 s, generation about 32 s. Output was checked for invented facts.
+- **Browser:** the whole flow (register, upload, analyze, notes, cover letter, new job, generate, edit with autosave, both PDF downloads, jobs list) was driven in headless Chromium against the real backend and a Celery worker, and the screenshots were reviewed.
+- Not verified: Docker image build with the new system packages (WeasyPrint needs Pango and fonts), production deploy, anything with a real user's resume (only a fictional one was used), the git and Obsidian sources (not built).
 
-**Pipeline**
-- `jsearch/client.py`, `scan_jobs` (with `job_cooldown` dedup) and `score_jobs`.
-- `llm/client.py` with `score_job` and `personalize_cover_letter`.
-- `daily_run` orchestrates scan -> score -> apply and writes a `RunLog`.
-- `apply_job.py` creates `Application` records, detects the ATS, and dispatches to Lambda in prod or runs in-process when `USE_LAMBDA=False`.
-- `run_pipeline` management command for local testing.
+## Done
 
-**Lambda**
-- `handler.py` runs the Browser Use agent, downloads the resume, and posts the result to `/api/pipeline/applications/<id>/callback/` with a shared-secret header.
-- Ships as a Docker image to ECR, with a GitHub Actions deploy workflow (replaced the zip upload in the spec).
+**Document generation (new)**
+- `documents` app: `ParsedResume`, `ContextSource`, `SourceDocumentSection`, `VoiceProfile`, `JobPosting`, `GeneratedDocument`, with admin and tracked migrations.
+- Resume analysis: PDF in, structured content plus layout spec out.
+- Supporting documents: upload `.md`/`.txt`, split by heading, Postgres full-text search, strictly user-scoped.
+- Three-stage generation with a separate model per stage: context scout (Haiku, tool-using, step-capped), writer (Sonnet), verifier (Haiku) that flags claims the sources do not support. Cached voice profile.
+- Structured output through `call_structured` (`output_config` JSON schema; no forced tool choice).
+- PDF export (WeasyPrint) and HTML preview from the same renderer; layout values validated before reaching CSS; markdown escaped; no external fetches; page-count warning.
+- API under `/api/documents/` (see `AGENTS.md`), including cover letter sample and parsed-resume list endpoints.
+- Frontend: `/profile`, `/jobs`, `/jobs/new`, `/jobs/[id]` with field editor, cover letter editor, live preview, autosave, flagged-claims panel, PDF download, "Generate again" (new version).
 
-**Scheduling**
-- DB-backed beat with `sync_schedules`, and a schedule toggle endpoint.
+**Platform (kept from before)**
+- Docker Compose stack, JWT httpOnly cookie auth, S3 storage helper, Celery.
+- `anthropic` SDK upgraded to 1.13.0.
+- Housekeeping done on this branch: `output: 'standalone'` and the invalid `experimental.turbo` key fixed in `next.config.mjs`; migrations now tracked in git (the blanket `migrations/` ignore was removed); `docs/` ignored; console calls removed from `proxy.js` and `Navbar.js`; register now refreshes the session.
 
-**Dashboard (more built than the tasklist says)**
-- Agent on/off toggle.
-- Search list with active toggle, schedule toggle, manual trigger and run logs.
-- Create-search form.
-- Resume list and upload.
-- Applications are fetched.
+## Known gaps and bugs
 
-**Misc**
-- `/api/health/` endpoint.
-- `sentry-sdk` in requirements.
-
-## Bugs and mismatches found
-
-1. **Local dispatch is probably broken.** `apply_job.py:148` does `from lambda_runner import run_handler`, but the module is at `pipeline/tasks/lambda_runner.py`. Should be `from .lambda_runner import run_handler`. The `ImportError` handler would then mislabel it as a missing browser-use install.
-2. **Cover letter personalization is not wired in.** `personalize_cover_letter` exists but nothing calls it. `daily_run.py` has a TODO for it, and `apply_job` reads `job.get('cover_letter', '')`, which is always empty.
-3. **Spec drift on submission.** No Greenhouse or Lever direct API clients. The `ats/__init__.py` docstring says they need the employer's API key, so everything goes through the browser agent. The spec and tasklist should say so.
-4. **Lambda marks applications `submitted` too early in prod.** `_dispatch_lambda` sets `submitted` plus `applied_at` as soon as the async invoke returns 202. The callback overwrites it later, but failures show as "submitted" in the meantime. Use `pending` until the callback arrives.
-5. **Sentry is not initialized.** Installed, but no `sentry_sdk.init` anywhere.
-6. **Cosmetic:**
-   - `llm/prompts.py` doesn't exist (prompts are in `client.py`).
-   - `AGENTS.md` lists `RefreshView` twice and `SearchSerializer` in the wrong app.
-   - Dashboard has `console.log`/`console.debug` calls that `AGENTS.md` forbids.
-   - The uncommitted `apply_job.py` import fix is correct: `pipeline.storage.get_resume_url` exists.
+1. **Failed or killed background tasks leave the UI spinning.** A failed parse shows "Analyzing…" forever with no retry; a worker that dies mid-generation leaves documents `pending` forever. Issue text is drafted but not filed (the harness blocks `gh issue create`); see "Needs your action".
+2. **Only fictional data has been tested.** Real resumes (two columns, tables, icons, unusual fonts) will stress the layout extraction. The layout spec is single-column only (`columns` is read but ignored).
+3. **Verifier is lenient on small embellishments** (for example an invented reason or adverb). It caught nothing on the last live run where a human reader would flag a couple of soft phrases. Worth tuning against real output.
+4. **No tests for the frontend**, and no automated browser test (the Playwright script used for verification lives only in a scratchpad).
+5. **Not production-ready:** nothing has been deployed; Sentry is installed but not initialised; no rate limiting or cost cap on generation endpoints (each generation spends real money); upload sizes are limited but there is no per-user quota.
+6. **Existing lint errors** remain in `/dashboard` (setState in effect) and `/onboarding` (unescaped `'`). Both pages are parked.
+7. **Parked pipeline bugs**, left as found: `apply_job` local import path wrong, cover letter personalisation never called, Lambda marks an application `submitted` before the callback, `send_digest` not written.
+8. **CLAUDE.md** still describes the old pipeline as the product ("Pipeline: scan -> LLM score -> apply").
+9. **Local venv drift:** `backend/env` had packages out of sync with `requirements.txt` (an old `anthropic`, missing Django and third-party migration files), and now contains Lambda packages (`browser-use`, `langchain-anthropic`) that pin `anthropic<1`. The backend image is unaffected. Recreate the venv from `requirements.txt` when convenient; running the parked in-process browser agent from it will not work on SDK 1.x.
 
 ## Left to do
 
-**Core pipeline**
-- [ ] Wire cover letter personalization into `daily_run` / `apply_job`.
-- [ ] Fix the `lambda_runner` import.
-- [ ] Decide on and set the intermediate application status.
-- [ ] Write `send_digest` (not started; no `EMAIL_*` settings in `settings.py` either) and call it at the end of `daily_run`.
-- [ ] Test the Lambda end to end against real ATS pages (unclear from the code whether this has been done).
+**Next (milestone 3)**
+- Git repository source: clone or pull a public repo (access token for private ones needs an encryption dependency), index `.md` files into sections. The model already has `ContextSource.kind = 'git'`.
+- Obsidian: Obsidian Publish is public-only, so likely a later add-on; an uploaded vault zip is a simpler stand-in.
+- Failure handling for parse and generation (item 1 above).
+- Tune the verifier and writer against real resumes.
 
-**Dashboard**
-- [ ] Application history table (data is fetched; check whether it renders).
-- [ ] Edit search preferences (roles, cities, etc.). Only creating a search exists.
-- [ ] Upload or edit a cover letter sample or portfolio after onboarding.
+**Before shipping**
+- Build and run the Docker images (`docker compose up --build`) and confirm WeasyPrint works in the container.
+- Deploy on the OptiPlex (Nginx, `.env`, `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d`, migrate) and smoke test the loop.
+- Initialise Sentry, add uptime monitoring and the `pg_dump` to S3 backup job.
+- Create the S3 bucket and IAM user (the code is ready; the bucket was never created).
+- Cost and abuse controls on `/generate/` and `/parse/`.
+- Update `CLAUDE.md`; remove or hide the parked `/dashboard` and `/onboarding` pages.
 
-**Infra and ops**
-- [ ] Create the S3 bucket and IAM user (code is ready, tasklist item unchecked).
-- [ ] Initialize Sentry in Django and Celery.
-- [ ] Set up UptimeRobot.
-- [ ] Set up the `pg_dump` -> S3 cron job.
-- [ ] Remove `UserPreferences` / `JobSearch` references from the tasklist.
-- [ ] Add Lambda env config `ANTHROPIC_API_KEY` / `DJANGO_CALLBACK_URL` (noted in `workflow.md`).
+**Later**
+- URL import of job descriptions (best effort with a paste fallback), browser extension, `.docx` in-place filling for Word resumes, embeddings if full-text retrieval proves too weak, two-column layouts.
+- Bring back automated applying through the Lambda browser agent.
+- Stripe and free-tier limits, social auth, password reset, email verification, notifications.
 
-**Deploy**
-- [ ] Docker and Nginx on the OptiPlex.
-- [ ] Clone the repo and add `.env`.
-- [ ] `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d`.
-- [ ] Run migrations, then smoke test the full loop.
-- [ ] Check `next.config.mjs` has `output: 'standalone'` (prod compose runs `node server.js`).
+## Needs your action
 
-**Post-MVP**
-- Stripe, free-tier gating, social auth, password reset, email verification (scaffolded only), and the `notifications` app (placeholder).
+- **File the failure-handling issue.** The text is in `docs/issue-parse-failure.md` (gitignored). Create it with `gh issue create`, label `bug`, title "Resume parsing and document generation hang forever when the Celery task fails", and `--body-file docs/issue-parse-failure.md`.
+- **Dev resume file:** a cleanup step may have deleted the local dev copy of your own resume at `/tmp/resumes/user_1/...`; restore it from `docs/` if parsing that resume fails locally.
+- Decide whether to push the branch and open a PR to `main`.
