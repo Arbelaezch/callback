@@ -22,6 +22,7 @@ from .serializers import (
     ParsedResumeSummarySerializer,
 )
 from .services import index_upload_source
+from .staleness import fail_stale_documents
 from .tasks import generate_documents_task, parse_resume_task
 
 logger = logging.getLogger(__name__)
@@ -155,6 +156,7 @@ class JobPostingListView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        fail_stale_documents(request.user)
         postings = JobPosting.objects.filter(user=request.user).prefetch_related('documents')
         return Response(JobPostingSerializer(postings, many=True).data)
 
@@ -169,6 +171,7 @@ class JobPostingDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, job_id):
+        fail_stale_documents(request.user)
         posting = JobPosting.objects.filter(pk=job_id, user=request.user).first()
         if posting is None:
             return Response({'detail': 'Job posting not found.'}, status=status.HTTP_404_NOT_FOUND)

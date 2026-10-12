@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/styles';
 
 const POLL_MS = 3000;
+const PARSE_POLL_TIMEOUT_MS = 3 * 60 * 1000;
 
 function errorText(err, fallback) {
   return err?.detail || fallback;
@@ -29,27 +30,36 @@ function SectionHeading({ title, description }) {
 
 function ResumeSection({ parsedIds, reloadParsed }) {
   const resumes = useApiResource('/api/users/resumes/');
-  const [analyzing, setAnalyzing] = useState(new Set());
   const [error, setError] = useState(null);
   const [uploading, setUploading] = useState(false);
+  const [timedOut, setTimedOut] = useState(false);
 
-  // An analyzing resume is "done" as soon as it shows up as parsed.
-  const pending = [...analyzing].filter((id) => !parsedIds.has(id));
-  const isWaiting = pending.length > 0;
+  // In-progress state comes from the server, so a page refresh still shows it.
+  const isWaiting = (resumes.data || []).some((r) => r.parse_status === 'pending');
+  const reloadResumes = resumes.reload;
 
   useEffect(() => {
-    if (!isWaiting) return undefined;
-    const timer = setInterval(reloadParsed, POLL_MS);
-    return () => clearInterval(timer);
-  }, [isWaiting, reloadParsed]);
+    if (!isWaiting || timedOut) return undefined;
+    const poll = setInterval(() => {
+      reloadResumes();
+      reloadParsed();
+    }, POLL_MS);
+    const stop = setTimeout(() => setTimedOut(true), PARSE_POLL_TIMEOUT_MS);
+    return () => {
+      clearInterval(poll);
+      clearTimeout(stop);
+    };
+  }, [isWaiting, timedOut, reloadResumes, reloadParsed]);
 
   async function analyze(resumeId) {
     setError(null);
+    setTimedOut(false);
     try {
       await apiClient.post(`/api/documents/resumes/${resumeId}/parse/`, {});
-      setAnalyzing((prev) => new Set(prev).add(resumeId));
     } catch (err) {
       setError(errorText(err, 'Could not start analysis.'));
+    } finally {
+      reloadResumes();
     }
   }
 
@@ -63,7 +73,6 @@ function ResumeSection({ parsedIds, reloadParsed }) {
       const formData = new FormData();
       formData.append('resume', file);
       const created = await apiClient.multipart('/api/users/resumes/', formData);
-      resumes.reload();
       await analyze(created.id);
     } catch (err) {
       setError(errorText(err, 'Upload failed.'));
@@ -82,17 +91,42 @@ function ResumeSection({ parsedIds, reloadParsed }) {
       <ul className="space-y-2">
         {(resumes.data || []).map((resume) => {
           const parsed = parsedIds.has(resume.id);
-          const busy = analyzing.has(resume.id);
+          const pending = resume.parse_status === 'pending';
+          const failed = resume.parse_status === 'failed';
+          const retry = (
+            <button
+              type="button"
+              onClick={() => analyze(resume.id)}
+              className={secondaryButtonClass}
+            >
+              Retry
+            </button>
+          );
           return (
             <li
               key={resume.id}
               className="flex items-center justify-between gap-3 rounded-md border border-border bg-card px-3 py-2 text-sm"
             >
               <span className="truncate">{resume.label || resume.filename}</span>
-              {parsed ? (
-                <span className="text-xs text-muted-foreground">Ready</span>
-              ) : busy ? (
+              {pending && !timedOut ? (
                 <span className="text-xs text-muted-foreground">Analyzing…</span>
+              ) : pending ? (
+                <span className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground">Taking longer than expected.</span>
+                  {retry}
+                </span>
+              ) : failed ? (
+                <span className="flex min-w-0 items-center gap-2">
+                  <span
+                    className="truncate text-xs text-destructive"
+                    title={resume.parse_error}
+                  >
+                    Failed: {resume.parse_error}
+                  </span>
+                  {retry}
+                </span>
+              ) : parsed ? (
+                <span className="text-xs text-muted-foreground">Ready</span>
               ) : resume.status === 'ready' ? (
                 <button
                   type="button"
