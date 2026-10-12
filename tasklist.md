@@ -33,14 +33,14 @@
 - [x] Next.js onboarding UI — role titles, cities, remote pref, resume upload, cover letter input
 
 **Job Discovery**
-- [ ] Write JSearch client (`jsearch/client.py`) — `fetch_jobs(role_titles, cities, location_types)`
-- [ ] Write dedup logic — check `JobSeen` before processing
-- [ ] Write Celery task `scan_jobs` — fetch → dedup → store unseen jobs
+- [x] Write JSearch client (`jsearch/client.py`) — `fetch_jobs(role_titles, cities, location_types)`
+- [x] Write dedup logic — check `JobSeen` before processing
+- [x] Write Celery task `scan_jobs` — fetch → dedup → store unseen jobs
 
 **LLM Scoring**
-- [ ] Write Anthropic client (`llm/client.py`) — `score_job`, `personalize_cover_letter`
-- [ ] Write prompt templates (`llm/prompts.py`)
-- [ ] Write Celery task `score_jobs` — score each unseen job, return top N
+- [x] Write Anthropic client (`llm/client.py`) — `score_job`, `personalize_cover_letter`
+- [x] Write prompt templates (`llm/prompts.py`)
+- [x] Write Celery task `score_jobs` — score each unseen job, return top N
 
 **Application Submission**
 - [ ] Write Greenhouse client (`ats/greenhouse.py`) — `submit(application)`
