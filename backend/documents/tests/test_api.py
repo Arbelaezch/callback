@@ -173,3 +173,35 @@ class RenderEndpointTests(ApiTestCase):
         }, format='json')
         preview = self.client.get(f'/api/documents/documents/{doc.pk}/preview/')
         self.assertIn('Edited summary', preview.content.decode())
+
+
+class ProfileEndpointTests(ApiTestCase):
+    def test_parsed_resume_list_is_scoped_and_omits_content(self):
+        mine = ParsedResume.objects.create(user=self.user, resume=self._resume(), content={'big': 1})
+        ParsedResume.objects.create(user=self.other, resume=self._resume(user=self.other))
+        response = self.client.get('/api/documents/resumes/parsed/')
+        self.assertEqual([row['id'] for row in response.data], [mine.pk])
+        self.assertNotIn('content', response.data[0])
+
+    def test_cover_letter_sample_roundtrip(self):
+        url = '/api/documents/cover-letter-sample/'
+        self.assertEqual(self.client.get(url).data, {'body': ''})
+        self.assertEqual(self.client.put(url, {'body': 'Hello there'}, format='json').status_code, 200)
+        self.assertEqual(self.client.put(url, {'body': 'Updated'}, format='json').status_code, 200)
+        self.assertEqual(self.client.get(url).data, {'body': 'Updated'})
+        from users.models import CoverLetterSample
+        self.assertEqual(CoverLetterSample.objects.filter(user=self.user).count(), 1)
+
+    def test_cover_letter_sample_edits_the_existing_onboarding_sample(self):
+        from users.models import CoverLetterSample
+        CoverLetterSample.objects.create(user=self.user, body='old', is_default=True)
+        self.client.put('/api/documents/cover-letter-sample/', {'body': 'new'}, format='json')
+        self.assertEqual(list(CoverLetterSample.objects.filter(user=self.user).values_list('body', flat=True)), ['new'])
+
+    def test_cover_letter_sample_rejects_empty_body_and_other_users_samples_are_untouched(self):
+        from users.models import CoverLetterSample
+        theirs = CoverLetterSample.objects.create(user=self.other, body='theirs', is_default=True)
+        self.assertEqual(self.client.put('/api/documents/cover-letter-sample/', {'body': '  '}, format='json').status_code, 400)
+        self.client.put('/api/documents/cover-letter-sample/', {'body': 'mine'}, format='json')
+        theirs.refresh_from_db()
+        self.assertEqual(theirs.body, 'theirs')

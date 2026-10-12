@@ -8,7 +8,7 @@ from rest_framework.views import APIView
 
 from callback.config import CONTEXT_UPLOAD_EXTENSIONS, CONTEXT_UPLOAD_MAX_BYTES
 from pipeline.storage import delete_resume, upload_context_document
-from users.models import Resume
+from users.models import CoverLetterSample, Resume
 
 from .models import ContextSource, GeneratedDocument, JobPosting, ParsedResume
 from .rendering import html_to_pdf, render_cover_letter_html, render_resume_html
@@ -17,6 +17,7 @@ from .serializers import (
     GeneratedDocumentSerializer,
     JobPostingSerializer,
     ParsedResumeSerializer,
+    ParsedResumeSummarySerializer,
 )
 from .services import index_upload_source
 from .tasks import generate_documents_task, parse_resume_task
@@ -43,6 +44,37 @@ class ResumeParseView(APIView):
             return Response({'detail': 'Resume is not ready.'}, status=status.HTTP_400_BAD_REQUEST)
         parse_resume_task.delay(resume.pk)
         return Response({'detail': 'Parsing started.'}, status=status.HTTP_202_ACCEPTED)
+
+
+class ParsedResumeListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        parsed = ParsedResume.objects.filter(user=request.user)
+        return Response(ParsedResumeSummarySerializer(parsed, many=True).data)
+
+
+class CoverLetterSampleView(APIView):
+    """The user's default cover letter sample: the voice reference for writing."""
+    permission_classes = [IsAuthenticated]
+
+    def _sample(self, user):
+        return CoverLetterSample.objects.filter(user=user).order_by('-is_default', '-created_at').first()
+
+    def get(self, request):
+        sample = self._sample(request.user)
+        return Response({'body': sample.body if sample else ''})
+
+    def put(self, request):
+        body = request.data.get('body')
+        if not isinstance(body, str) or not body.strip():
+            return Response({'detail': 'body is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        sample = self._sample(request.user)
+        if sample is None:
+            sample = CoverLetterSample(user=request.user, label='Default', is_default=True)
+        sample.body = body
+        sample.save()
+        return Response({'body': sample.body})
 
 
 class ContextSourceListView(APIView):

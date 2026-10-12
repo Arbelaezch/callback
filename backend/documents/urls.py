@@ -1,6 +1,8 @@
 from django.urls import path
 
 from .views import (
+    CoverLetterSampleView,
+    ParsedResumeListView,
     DocumentExportView,
     DocumentPreviewView,
     ContextSourceDetailView,
@@ -14,6 +16,8 @@ from .views import (
 
 urlpatterns = [
     path('resumes/<int:resume_id>/parse/', ResumeParseView.as_view(), name='resume-parse'),
+    path('resumes/parsed/', ParsedResumeListView.as_view(), name='parsed-resume-list'),
+    path('cover-letter-sample/', CoverLetterSampleView.as_view(), name='cover-letter-sample'),
     path('sources/', ContextSourceListView.as_view(), name='source-list'),
     path('sources/<int:source_id>/', ContextSourceDetailView.as_view(), name='source-detail'),
     path('jobs/', JobPostingListView.as_view(), name='job-list'),

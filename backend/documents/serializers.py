@@ -10,6 +10,15 @@ class ParsedResumeSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+class ParsedResumeSummarySerializer(serializers.ModelSerializer):
+    """Which resumes have been parsed, without the bulky content."""
+
+    class Meta:
+        model = ParsedResume
+        fields = ['id', 'resume', 'updated_at']
+        read_only_fields = fields
+
+
 class ContextSourceSerializer(serializers.ModelSerializer):
     class Meta:
         model = ContextSource
