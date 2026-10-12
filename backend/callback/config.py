@@ -27,7 +27,13 @@ LLM_MODEL_SCOUT = 'claude-haiku-4-5-20251001'
 LLM_MODEL_WRITER = 'claude-sonnet-5-5'
 LLM_MODEL_VERIFIER = 'claude-haiku-4-5-20251001'
 LLM_MAX_TOKENS_WRITER = 8192
+LLM_MAX_TOKENS_SCOUT = 2048
 LLM_TIMEOUT_SECONDS_LONG = 120  # PDF analysis and document writing
+
+# Scout agent: tool-use rounds before it is forced to submit its brief.
+SCOUT_MAX_STEPS = 8
+SCOUT_TOOL_RESULT_MAX_CHARS = 6000
+VOICE_SAMPLE_MAX_CHARS = 6000
 
 # Context sources: sections longer than this are split on paragraph breaks.
 CONTEXT_SECTION_MAX_CHARS = 2000

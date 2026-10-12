@@ -121,3 +121,72 @@ RESUME_ANALYSIS_SCHEMA = {
     },
     'required': ['content', 'layout'],
 }
+
+
+# ---------------------------------------------------------------------------
+# Generation stages
+# ---------------------------------------------------------------------------
+
+CONTEXT_BRIEF_SCHEMA = {
+    'type': 'object',
+    'properties': {
+        'facts': {
+            'type': 'array',
+            'description': 'Material from the user sources that is relevant to this job.',
+            'items': {
+                'type': 'object',
+                'properties': {
+                    'quote': {'type': 'string', 'description': 'Verbatim text from the source.'},
+                    'source': {'type': 'string', 'description': 'Source label and path.'},
+                    'why_relevant': {'type': 'string'},
+                },
+                'required': ['quote', 'source', 'why_relevant'],
+            },
+        },
+    },
+    'required': ['facts'],
+}
+
+VOICE_PROFILE_SCHEMA = {
+    'type': 'object',
+    'properties': {
+        'notes': {
+            'type': 'string',
+            'description': 'Tone, sentence length, vocabulary habits, typical openers and closers.',
+        },
+        'excerpts': {
+            'type': 'array',
+            'description': '2-3 short verbatim excerpts that show the voice.',
+            'items': {'type': 'string'},
+        },
+    },
+    'required': ['notes', 'excerpts'],
+}
+
+GENERATION_SCHEMA = {
+    'type': 'object',
+    'properties': {
+        'resume': RESUME_CONTENT_SCHEMA,
+        'cover_letter_markdown': {'type': 'string'},
+    },
+    'required': ['resume', 'cover_letter_markdown'],
+}
+
+VERIFICATION_SCHEMA = {
+    'type': 'object',
+    'properties': {
+        'unsupported_claims': {
+            'type': 'array',
+            'items': {
+                'type': 'object',
+                'properties': {
+                    'document': {'type': 'string', 'enum': ['resume', 'cover_letter']},
+                    'claim': {'type': 'string'},
+                    'reason': {'type': 'string'},
+                },
+                'required': ['document', 'claim', 'reason'],
+            },
+        },
+    },
+    'required': ['unsupported_claims'],
+}
