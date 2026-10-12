@@ -33,7 +33,7 @@ export default function RegisterPage() {
     try {
       await register(form);
     //   console.debug('[RegisterForm] success, redirecting to /onboarding');
-      router.push('/onboarding');
+      router.push('/profile');
     } catch (err) {
       console.warn('[RegisterForm] error', err);
       const fieldError = ['username', 'email', 'password']

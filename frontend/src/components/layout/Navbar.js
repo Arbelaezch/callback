@@ -19,18 +19,17 @@ export default function Navbar() {
   const { user, loading, logout } = useAuth();
 
   async function handleLogout() {
-    console.debug('[Navbar] logging out');
     try {
       await logout();
-    } catch (err) {
-      console.error('[Navbar] logout error', err);
+    } catch {
+      // Session is cleared server-side either way; fall through to /login.
     }
     router.push('/login');
   }
 
   return (
     <nav className="border-b border-border bg-background px-4 py-3 flex items-center justify-between">
-      <Link href="/dashboard" className="font-semibold tracking-tight text-foreground">
+      <Link href="/jobs" className="font-semibold tracking-tight text-foreground">
         Callback
       </Link>
 
@@ -41,7 +40,6 @@ export default function Navbar() {
           <>
             <span className="text-muted-foreground hidden sm:inline">{user.username}</span>
 
-            {/* PROFILE SCAFFOLD: route to /profile once that page exists */}
             <Link
               href="/profile"
               className="rounded-md px-3 py-1.5 border border-input text-foreground hover:bg-muted transition-colors"

@@ -39,7 +39,23 @@ function refreshToken() {
   return refreshPromise;
 }
 
-async function request(path, options = {}) {
+/**
+ * Read a successful response. `parse` is 'json' (default), 'text', or 'blob'.
+ * Blobs come back as { blob, pageCount } so PDF downloads can warn on overflow.
+ */
+async function readBody(res, parse) {
+  if (res.status === 204) return null;
+  if (parse === 'text') return res.text();
+  if (parse === 'blob') {
+    return {
+      blob: await res.blob(),
+      pageCount: Number(res.headers.get('X-Page-Count')) || null,
+    };
+  }
+  return res.json();
+}
+
+async function request(path, options = {}, parse = 'json') {
   const { headers: extraHeaders, ...restOptions } = options;
   const isFormData = restOptions.body instanceof FormData;
 
@@ -76,8 +92,7 @@ async function request(path, options = {}) {
         const error = await retry.json().catch(() => ({ detail: 'An error occurred.' }));
         throw { status: retry.status, ...error };
       }
-      if (retry.status === 204) return null;
-      return retry.json();
+      return readBody(retry, parse);
     }
 
     // Refresh also failed — session is dead
@@ -89,15 +104,15 @@ async function request(path, options = {}) {
     throw { status: res.status, ...error };
   }
 
-  // 204 No Content
-  if (res.status === 204) return null;
-
-  return res.json();
+  return readBody(res, parse);
 }
 
 export const apiClient = {
   get: (path) => request(path),
+  getText: (path) => request(path, {}, 'text'),
+  getBlob: (path) => request(path, {}, 'blob'),
   post: (path, body) => request(path, { method: 'POST', body: JSON.stringify(body) }),
+  put: (path, body) => request(path, { method: 'PUT', body: JSON.stringify(body) }),
   patch: (path, body) => request(path, { method: 'PATCH', body: JSON.stringify(body) }),
   delete: (path) => request(path, { method: 'DELETE' }),
   multipart: (path, formData) =>

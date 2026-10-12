@@ -5,13 +5,8 @@ const nextConfig = {
   turbopack: {
     resolveExtensions: ['.js', '.jsx', '.ts', '.tsx'],
   },
-  experimental: {
-    turbo: {
-      watchOptions: {
-        ignored: ['**/node_modules/**', '**/.next/**'],
-      },
-    },
-  },
+  // Self-contained server bundle; the prod compose file runs `node server.js`.
+  output: 'standalone',
   async rewrites() {
     return [
       {
