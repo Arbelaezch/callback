@@ -40,8 +40,14 @@ class UserSerializer(serializers.ModelSerializer):
 class ResumeSerializer(serializers.ModelSerializer):
     class Meta:
         model = Resume
-        fields = ('id', 'label', 'filename', 'status', 'is_default', 'uploaded_at')
-        read_only_fields = ('id', 'filename', 'is_default', 'uploaded_at')
+        fields = (
+            'id', 'label', 'filename', 'status', 'is_default', 'uploaded_at',
+            'parse_status', 'parse_error', 'parse_requested_at',
+        )
+        read_only_fields = (
+            'id', 'filename', 'is_default', 'uploaded_at',
+            'parse_status', 'parse_error', 'parse_requested_at',
+        )
 
 
 class PortfolioSerializer(serializers.ModelSerializer):

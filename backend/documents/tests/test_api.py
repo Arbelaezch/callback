@@ -41,6 +41,38 @@ class ResumeParseTests(ApiTestCase):
         self.assertEqual(self.client.post(f'/api/documents/resumes/{foreign.pk}/parse/').status_code, 404)
         delay.assert_not_called()
 
+    @patch('documents.views.parse_resume_task.delay')
+    def test_post_marks_parse_pending(self, delay):
+        resume = self._resume()
+        resume.parse_status = 'failed'
+        resume.parse_error = 'old error'
+        resume.save()
+        response = self.client.post(f'/api/documents/resumes/{resume.pk}/parse/')
+        self.assertEqual(response.status_code, 202)
+        resume.refresh_from_db()
+        self.assertEqual(resume.parse_status, 'pending')
+        self.assertEqual(resume.parse_error, '')
+        self.assertIsNotNone(resume.parse_requested_at)
+
+    @patch('documents.views.parse_resume_task.delay', side_effect=Exception('broker down'))
+    def test_post_returns_503_when_queueing_fails(self, delay):
+        resume = self._resume()
+        response = self.client.post(f'/api/documents/resumes/{resume.pk}/parse/')
+        self.assertEqual(response.status_code, 503)
+        resume.refresh_from_db()
+        self.assertEqual(resume.parse_status, 'failed')
+
+    def test_resume_list_exposes_parse_status(self):
+        resume = self._resume()
+        resume.parse_status = 'failed'
+        resume.parse_error = 'boom'
+        resume.save()
+        response = self.client.get('/api/users/resumes/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data[0]['parse_status'], 'failed')
+        self.assertEqual(response.data[0]['parse_error'], 'boom')
+        self.assertIn('parse_requested_at', response.data[0])
+
     def test_get_returns_parsed_content(self):
         resume = self._resume()
         ParsedResume.objects.create(user=self.user, resume=resume, content={'header': {'name': 'Ada'}})

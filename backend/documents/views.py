@@ -1,6 +1,8 @@
+import logging
 import os
 
 from django.http import HttpResponse
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -22,6 +24,8 @@ from .serializers import (
 from .services import index_upload_source
 from .tasks import generate_documents_task, parse_resume_task
 
+logger = logging.getLogger(__name__)
+
 
 class ResumeParseView(APIView):
     """POST queues analysis of a ready resume; GET returns the parsed result."""
@@ -42,7 +46,19 @@ class ResumeParseView(APIView):
             return Response({'detail': 'Resume not found.'}, status=status.HTTP_404_NOT_FOUND)
         if resume.status != 'ready':
             return Response({'detail': 'Resume is not ready.'}, status=status.HTTP_400_BAD_REQUEST)
-        parse_resume_task.delay(resume.pk)
+        resume.parse_status = 'pending'
+        resume.parse_error = ''
+        resume.parse_requested_at = timezone.now()
+        resume.save(update_fields=['parse_status', 'parse_error', 'parse_requested_at'])
+        try:
+            parse_resume_task.delay(resume.pk)
+        except Exception:
+            logger.exception('Could not queue parse for resume %s', resume.pk)
+            detail = 'Could not start analysis. Please try again.'
+            resume.parse_status = 'failed'
+            resume.parse_error = detail
+            resume.save(update_fields=['parse_status', 'parse_error'])
+            return Response({'detail': detail}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         return Response({'detail': 'Parsing started.'}, status=status.HTTP_202_ACCEPTED)
 
 

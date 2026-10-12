@@ -18,20 +18,31 @@ def parse_resume(resume) -> ParsedResume:
     Analyse a ready Resume and store its structured content and layout.
     Re-running replaces the previous parse.
 
-    Raises ValueError if the resume has no stored file yet.
+    Sets resume.parse_status to 'ready' on success. On any failure (including
+    a resume with no stored file yet) it is set to 'failed' with the error
+    recorded, and the exception is re-raised.
     """
-    if resume.status != 'ready':
-        raise ValueError(f'Resume {resume.pk} is {resume.status}, not ready')
+    try:
+        if resume.status != 'ready':
+            raise ValueError(f'Resume {resume.pk} is {resume.status}, not ready')
 
-    result = analyze_resume(read_file(resume.s3_key))
-    parsed, _ = ParsedResume.objects.update_or_create(
-        resume=resume,
-        defaults={
-            'user': resume.user,
-            'content': result['content'],
-            'layout': result['layout'],
-        },
-    )
+        result = analyze_resume(read_file(resume.s3_key))
+        parsed, _ = ParsedResume.objects.update_or_create(
+            resume=resume,
+            defaults={
+                'user': resume.user,
+                'content': result['content'],
+                'layout': result['layout'],
+            },
+        )
+        resume.parse_status = 'ready'
+        resume.parse_error = ''
+        resume.save(update_fields=['parse_status', 'parse_error'])
+    except Exception as exc:
+        resume.parse_status = 'failed'
+        resume.parse_error = str(exc) or exc.__class__.__name__
+        resume.save(update_fields=['parse_status', 'parse_error'])
+        raise
     logger.info('Parsed resume %s for user %s', resume.pk, resume.user_id)
     return parsed
 
