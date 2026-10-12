@@ -3,6 +3,10 @@
   margin: {{ layout.margin_top }}in {{ layout.margin_right }}in {{ layout.margin_bottom }}in {{ layout.margin_left }}in;
 }
 * { box-sizing: border-box; }
+/* @page margins only apply when printing; give the on-screen preview the same margins. */
+@media screen {
+  body { padding: {{ layout.margin_top }}in {{ layout.margin_right }}in {{ layout.margin_bottom }}in {{ layout.margin_left }}in; }
+}
 body {
   margin: 0;
   font-family: {{ layout.font_stack }};

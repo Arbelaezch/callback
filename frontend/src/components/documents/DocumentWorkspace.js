@@ -140,7 +140,8 @@ export default function DocumentWorkspace({ doc, company }) {
       </div>
       {error && <p className="text-sm text-destructive">{error}</p>}
 
-      <div className="grid gap-6 xl:grid-cols-2">
+      {/* A letter page is 51rem wide plus the preview padding; side by side only when the screen fits editor + page. */}
+      <div className="grid gap-6 min-[1400px]:grid-cols-[minmax(0,1fr)_52.5rem]">
         <div>
           {isResume ? (
             <ResumeEditor content={draft} onChange={handleChange} />

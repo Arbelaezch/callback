@@ -72,7 +72,7 @@ export default function JobPage() {
 
   return (
     <main className="min-h-screen bg-background px-4 py-10">
-      <div className="mx-auto max-w-7xl space-y-6">
+      <div className="mx-auto max-w-400 space-y-6">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">{job.data.title}</h1>
