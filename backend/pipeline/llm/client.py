@@ -21,11 +21,67 @@ from callback.config import LLM_MODEL, LLM_MAX_TOKENS, LLM_TIMEOUT_SECONDS
 logger = logging.getLogger(__name__)
 
 
-def _get_client() -> anthropic.Anthropic:
+def _get_client(timeout: int = LLM_TIMEOUT_SECONDS) -> anthropic.Anthropic:
     return anthropic.Anthropic(
         api_key=os.environ['ANTHROPIC_API_KEY'],
-        timeout=LLM_TIMEOUT_SECONDS,
+        timeout=timeout,
     )
+
+
+def _strict_schema(schema):
+    """
+    Return a copy of `schema` closed for structured outputs: every object gets
+    additionalProperties: false and all of its properties required. The API caps
+    optional fields per schema, so absent values are sent as empty strings or
+    arrays instead of being omitted.
+    """
+    if isinstance(schema, dict):
+        out = {k: _strict_schema(v) for k, v in schema.items()}
+        if out.get('type') == 'object':
+            out['additionalProperties'] = False
+            out['required'] = list(out.get('properties', {}))
+        return out
+    if isinstance(schema, list):
+        return [_strict_schema(v) for v in schema]
+    return schema
+
+
+def call_structured(
+    *,
+    model: str,
+    system: str,
+    content: list,
+    schema: dict,
+    max_tokens: int,
+    timeout: int = LLM_TIMEOUT_SECONDS,
+) -> dict:
+    """
+    Call the model and return JSON that conforms to `schema`.
+
+    Uses the API's structured outputs (output_config.format), which constrains
+    the response to the schema. Forced tool_choice is not used because newer
+    models reject it.
+
+    Raises
+    ------
+    ValueError   if the response was cut off, refused, or has no text.
+    anthropic.*  re-raised on any Anthropic API error.
+    """
+    message = _get_client(timeout).messages.create(
+        model=model,
+        max_tokens=max_tokens,
+        system=system,
+        output_config={'format': {'type': 'json_schema', 'schema': _strict_schema(schema)}},
+        messages=[{'role': 'user', 'content': content}],
+    )
+    if message.stop_reason == 'refusal':
+        raise ValueError('Model declined the request')
+    if message.stop_reason == 'max_tokens':
+        raise ValueError('Model output was cut off; raise max_tokens')
+    for block in message.content:
+        if block.type == 'text':
+            return json.loads(block.text)
+    raise ValueError('Model returned no text')
 
 
 # ---------------------------------------------------------------------------

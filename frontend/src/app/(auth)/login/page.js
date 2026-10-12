@@ -9,7 +9,7 @@ import { useAuth } from '@/contexts/AuthContext';
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const next = searchParams.get('next') || '/dashboard';
+  const next = searchParams.get('next') || '/jobs';
 
   const { user, loading: loadingUser, refresh } = useAuth();
   const [form, setForm] = useState({ username: '', password: '' });

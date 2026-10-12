@@ -39,6 +39,7 @@ urlpatterns = [
 
     # Apps
     path('api/jobs/', include('jobs.urls')),
+    path('api/documents/', include('documents.urls')),
     path('api/users/', include('users.urls')),
     path('api/pipeline/', include('pipeline.urls')),
 

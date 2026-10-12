@@ -1,0 +1,39 @@
+{% autoescape off %}@page {
+  size: {{ layout.page_size }};
+  margin: {{ layout.margin_top }}in {{ layout.margin_right }}in {{ layout.margin_bottom }}in {{ layout.margin_left }}in;
+}
+* { box-sizing: border-box; }
+/* @page margins only apply when printing; give the on-screen preview the same margins. */
+@media screen {
+  body { padding: {{ layout.margin_top }}in {{ layout.margin_right }}in {{ layout.margin_bottom }}in {{ layout.margin_left }}in; }
+}
+body {
+  margin: 0;
+  font-family: {{ layout.font_stack }};
+  font-size: {{ layout.font_size_pt }}pt;
+  line-height: {{ layout.line_height }};
+  color: #111;
+}
+header { text-align: {{ layout.header_align }}; margin-bottom: 0.9em; }
+header h1 { margin: 0; font-size: 1.9em; line-height: 1.15; {% if layout.accent_color %}color: {{ layout.accent_color }};{% endif %} }
+header .headline { margin: 0.1em 0 0; font-size: 1.05em; }
+header .contact { margin: 0.25em 0 0; font-size: 0.95em; }
+section { margin-top: 0.85em; }
+section h2 {
+  margin: 0 0 0.35em;
+  font-size: 1.05em;
+  {% if layout.title_style == "uppercase" %}text-transform: uppercase; letter-spacing: 0.05em;{% endif %}
+  {% if layout.title_style == "small_caps" %}font-variant: small-caps; letter-spacing: 0.04em;{% endif %}
+  {% if layout.accent_color %}color: {{ layout.accent_color }};{% endif %}
+  {% if layout.section_rule %}border-bottom: 0.75pt solid #444; padding-bottom: 0.1em;{% endif %}
+}
+.entry { margin-bottom: 0.55em; page-break-inside: avoid; }
+.entry-head { display: flex; justify-content: space-between; font-weight: bold; }
+.entry-head .dates { font-weight: normal; white-space: nowrap; }
+.entry-sub { font-style: italic; }
+ul { margin: 0.2em 0 0; padding-left: 1.2em; {% if layout.bullet_style == "dash" %}list-style-type: "– ";{% endif %}{% if layout.bullet_style == "none" %}list-style: none; padding-left: 0;{% endif %} }
+li { margin-bottom: 0.15em; }
+p { margin: 0 0 0.8em; }
+p.skill-row { margin: 0 0 0.2em; }
+.letter-date { margin-bottom: 1.2em; }
+{% endautoescape %}

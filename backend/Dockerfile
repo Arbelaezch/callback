@@ -7,10 +7,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Install system deps (psycopg2 needs libpq)
+# Install system deps (psycopg2 needs libpq; WeasyPrint needs Pango and fonts)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     gcc \
+    libpango-1.0-0 \
+    libpangoft2-1.0-0 \
+    fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

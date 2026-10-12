@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { register } from '@/lib/auth';
@@ -9,13 +9,15 @@ import { useAuth } from '@/contexts/AuthContext';
 export default function RegisterPage() {
   const router = useRouter();
 
-  const { user, loading: loadingUser } = useAuth();
+  const { user, loading: loadingUser, refresh } = useAuth();
+  const justRegistered = useRef(false);
   const [form, setForm] = useState({ username: '', email: '', password: '' });
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (!loadingUser && user) router.replace('/dashboard');
+    // Skip when the user has just registered: submit sends them to /profile.
+    if (!loadingUser && user && !justRegistered.current) router.replace('/jobs');
   }, [user, loadingUser, router]);
 
   if (loadingUser) return null;
@@ -32,8 +34,10 @@ export default function RegisterPage() {
 
     try {
       await register(form);
+      justRegistered.current = true;
+      await refresh();
     //   console.debug('[RegisterForm] success, redirecting to /onboarding');
-      router.push('/onboarding');
+      router.push('/profile');
     } catch (err) {
       console.warn('[RegisterForm] error', err);
       const fieldError = ['username', 'email', 'password']

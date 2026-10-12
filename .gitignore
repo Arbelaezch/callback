@@ -1,6 +1,4 @@
 
-migrations/
-
 # ========================
 # Environment
 # ========================
@@ -86,3 +84,16 @@ celerybeat-schedule.wal
 # ========================
 *.bak
 *.tmp
+
+# ========================
+# Local test inputs
+# ========================
+# Personal resumes and job descriptions used for manual testing
+docs/
+
+# ========================
+# Claude Code local settings
+# ========================
+# settings.json holds a machine-specific plugin path; harness.toml stays tracked
+.claude/settings.json
+.claude/settings.local.json

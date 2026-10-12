@@ -54,7 +54,7 @@ from django.conf import settings
 from jobs.models import Application, RunLog, Search
 from users.models import Resume
 from pipeline.ats import detect_ats
-from storage.s3 import get_resume_url
+from pipeline.storage import get_resume_url
 
 logger = logging.getLogger(__name__)
 

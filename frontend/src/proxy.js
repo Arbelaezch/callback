@@ -12,7 +12,6 @@ const PUBLIC_PATHS = ['/login', '/register', '/onboarding'];
 
 export function proxy(request) {
   const { pathname } = request.nextUrl;
-  console.log('[Proxy] pathname=', pathname);
   const accessToken = request.cookies.get('access_token')?.value;
 
   const isPublic = PUBLIC_PATHS.some((path) => pathname.startsWith(path));
@@ -27,9 +26,9 @@ export function proxy(request) {
     return NextResponse.redirect(loginUrl);
   }
 
-  // Authenticated user hitting auth pages → dashboard
+  // Authenticated user hitting auth pages → jobs
   if (accessToken && isPublic) {
-    return NextResponse.redirect(new URL('/dashboard', request.url));
+    return NextResponse.redirect(new URL('/jobs', request.url));
   }
 
   return NextResponse.next();
