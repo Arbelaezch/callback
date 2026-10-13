@@ -1,11 +1,15 @@
+from datetime import timedelta
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.utils import timezone
 from rest_framework.test import APITestCase
 from rest_framework_simplejwt.exceptions import TokenError
+from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from callback.config import REFRESH_ROTATION_GRACE_SECONDS
 from users.models import Resume
 
 
@@ -86,3 +90,76 @@ class AuthCookieTests(APITestCase):
         response = self.client.post('/api/auth/token/refresh/')
         self.assertEqual(response.status_code, 200)
         self.assertNotEqual(response.cookies['access_token'].value, '')
+
+    def _refresh_with(self, token):
+        self.client.cookies['refresh_token'] = token
+        return self.client.post('/api/auth/token/refresh/')
+
+    def test_refresh_rotates_refresh_token(self):
+        old = str(RefreshToken.for_user(self.user))
+        response = self._refresh_with(old)
+        self.assertEqual(response.status_code, 200)
+        new = response.cookies['refresh_token'].value
+        self.assertNotEqual(new, '')
+        self.assertNotEqual(new, old)
+        with self.assertRaises(TokenError):
+            RefreshToken(old)
+        RefreshToken(new)
+
+    def test_reused_token_within_grace_keeps_cookies(self):
+        old = str(RefreshToken.for_user(self.user))
+        self.assertEqual(self._refresh_with(old).status_code, 200)
+        response = self._refresh_with(old)
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.data['code'], 'token_rotated')
+        self.assertNotIn('refresh_token', response.cookies)
+        self.assertNotIn('access_token', response.cookies)
+
+    def test_reused_token_after_grace_clears_cookies(self):
+        old = str(RefreshToken.for_user(self.user))
+        self.assertEqual(self._refresh_with(old).status_code, 200)
+        BlacklistedToken.objects.filter(
+            token__jti=RefreshToken(old, verify=False)['jti']
+        ).update(
+            blacklisted_at=timezone.now()
+            - timedelta(seconds=REFRESH_ROTATION_GRACE_SECONDS + 1)
+        )
+        response = self._refresh_with(old)
+        self.assertEqual(response.status_code, 401)
+        self._assert_cleared(response)
+        self.assertNotIn('code', response.data)
+
+    def test_tampered_token_with_just_blacklisted_jti_clears_cookies(self):
+        old = str(RefreshToken.for_user(self.user))
+        self.assertEqual(self._refresh_with(old).status_code, 200)
+        header, payload, signature = old.split('.')
+        flipped = 'A' if signature[0] != 'A' else 'B'
+        response = self._refresh_with(f'{header}.{payload}.{flipped}{signature[1:]}')
+        self.assertEqual(response.status_code, 401)
+        self._assert_cleared(response)
+        self.assertNotIn('code', response.data)
+
+    def test_expired_token_with_just_blacklisted_jti_clears_cookies(self):
+        old = str(RefreshToken.for_user(self.user))
+        self.assertEqual(self._refresh_with(old).status_code, 200)
+        expired = RefreshToken(old, verify=False)
+        expired.set_exp(from_time=timezone.now() - timedelta(days=60))
+        response = self._refresh_with(str(expired))
+        self.assertEqual(response.status_code, 401)
+        self._assert_cleared(response)
+        self.assertNotIn('code', response.data)
+
+    def test_refresh_for_inactive_user_clears_cookies(self):
+        token = str(RefreshToken.for_user(self.user))
+        self.user.is_active = False
+        self.user.save()
+        response = self._refresh_with(token)
+        self.assertEqual(response.status_code, 401)
+        self._assert_cleared(response)
+
+    def test_refresh_for_deleted_user_clears_cookies(self):
+        token = str(RefreshToken.for_user(self.user))
+        self.user.delete()
+        response = self._refresh_with(token)
+        self.assertEqual(response.status_code, 401)
+        self._assert_cleared(response)

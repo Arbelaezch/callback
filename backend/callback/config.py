@@ -60,6 +60,10 @@ JSEARCH_PAGE_SIZE = 10  # results per API call; JSearch max is 10
 # max-age and token lifetime are changed in one place.
 AUTH_COOKIE_MAX_AGE = 60 * 60 * 24 * 7  # 7 days
 
+# A refresh token blacklisted less than this many seconds ago gets a 401 that
+# keeps cookies, so another tab's rotation does not log everyone out.
+REFRESH_ROTATION_GRACE_SECONDS = 30
+
 # -----------------------------------------------------------------
 # Celery
 # -----------------------------------------------------------------

@@ -1,11 +1,20 @@
+from datetime import timedelta
+
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ObjectDoesNotExist
 from django.db import transaction
+from django.utils import timezone
 from rest_framework import status
+from rest_framework.exceptions import AuthenticationFailed, ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.tokens import RefreshToken
-from rest_framework_simplejwt.exceptions import TokenError
+from rest_framework_simplejwt.exceptions import TokenBackendError, TokenError
+from rest_framework_simplejwt.serializers import TokenRefreshSerializer
+from rest_framework_simplejwt.settings import api_settings
+from rest_framework_simplejwt.state import token_backend
+from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken
 from django.conf import settings
 
 from .serializers import (
@@ -16,7 +25,7 @@ from .serializers import (
 )
 from .models import CoverLetterSample, Portfolio, Resume
 from jobs.models import Agent, Search
-from callback.config import RESUME_UPLOAD_MAX_BYTES
+from callback.config import REFRESH_ROTATION_GRACE_SECONDS, RESUME_UPLOAD_MAX_BYTES
 from pipeline.storage import upload_resume
 from documents.staleness import fail_stale_parses
 
@@ -47,6 +56,22 @@ def clear_auth_cookies(response):
     """Clear JWT cookies on logout."""
     response.delete_cookie('access_token', samesite='Lax')
     response.delete_cookie('refresh_token', samesite='Lax')
+
+
+def _recently_rotated(raw_token):
+    """True if the token is validly signed, unexpired and was blacklisted
+    within the rotation grace window (i.e. another tab just rotated it)."""
+    try:
+        payload = token_backend.decode(raw_token, verify=True)
+    except TokenBackendError:
+        return False
+    jti = payload.get(api_settings.JTI_CLAIM)
+    if not jti:
+        return False
+    cutoff = timezone.now() - timedelta(seconds=REFRESH_ROTATION_GRACE_SECONDS)
+    return BlacklistedToken.objects.filter(
+        token__jti=jti, blacklisted_at__gte=cutoff
+    ).exists()
 
 
 class RegisterView(APIView):
@@ -209,17 +234,32 @@ class RefreshView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
-        refresh_token = request.COOKIES.get('refresh_token')
-        if not refresh_token:
+        raw = request.COOKIES.get('refresh_token')
+        if not raw:
             return self._unauthorized('No refresh token.')
 
+        # The serializer blacklists the presented token and issues a new one
+        # (ROTATE_REFRESH_TOKENS / BLACKLIST_AFTER_ROTATION).
+        serializer = TokenRefreshSerializer(data={'refresh': raw})
         try:
-            refresh = RefreshToken(refresh_token)
-            response = Response({'detail': 'Refreshed.'})
-            set_auth_cookies(response, refresh.access_token, refresh)
-            return response
+            serializer.is_valid(raise_exception=True)
         except TokenError:
+            if _recently_rotated(raw):
+                # Another tab rotated this token moments ago and its new
+                # cookies are already in the jar: keep them, issue nothing.
+                return Response(
+                    {'detail': 'Refresh token already rotated.', 'code': 'token_rotated'},
+                    status=status.HTTP_401_UNAUTHORIZED,
+                )
             return self._unauthorized('Invalid refresh token.')
+        except (AuthenticationFailed, ObjectDoesNotExist, ValidationError):
+            # Inactive or deleted user.
+            return self._unauthorized('Invalid refresh token.')
+
+        data = serializer.validated_data
+        response = Response({'detail': 'Refreshed.'})
+        set_auth_cookies(response, data['access'], data['refresh'])
+        return response
 
     @staticmethod
     def _unauthorized(detail):
