@@ -129,6 +129,26 @@ class AuthCookieTests(APITestCase):
         self._assert_cleared(response)
         self.assertNotIn('code', response.data)
 
+    def test_tampered_token_with_just_blacklisted_jti_clears_cookies(self):
+        old = str(RefreshToken.for_user(self.user))
+        self.assertEqual(self._refresh_with(old).status_code, 200)
+        header, payload, signature = old.split('.')
+        flipped = 'A' if signature[0] != 'A' else 'B'
+        response = self._refresh_with(f'{header}.{payload}.{flipped}{signature[1:]}')
+        self.assertEqual(response.status_code, 401)
+        self._assert_cleared(response)
+        self.assertNotIn('code', response.data)
+
+    def test_expired_token_with_just_blacklisted_jti_clears_cookies(self):
+        old = str(RefreshToken.for_user(self.user))
+        self.assertEqual(self._refresh_with(old).status_code, 200)
+        expired = RefreshToken(old, verify=False)
+        expired.set_exp(from_time=timezone.now() - timedelta(days=60))
+        response = self._refresh_with(str(expired))
+        self.assertEqual(response.status_code, 401)
+        self._assert_cleared(response)
+        self.assertNotIn('code', response.data)
+
     def test_refresh_for_inactive_user_clears_cookies(self):
         token = str(RefreshToken.for_user(self.user))
         self.user.is_active = False
