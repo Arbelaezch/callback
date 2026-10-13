@@ -222,6 +222,64 @@ class JobAndGenerationTests(ApiTestCase):
         doc.refresh_from_db()
         self.assertEqual((doc.content, doc.edited), ({'summary': 'old'}, False))
 
+    def _valid_resume_content(self):
+        return {'header': {'name': 'Ada'}, 'summary': 'old', 'experience': [],
+                'projects': [], 'education': [], 'skills': []}
+
+    def test_patch_resume_content_with_unknown_or_missing_keys_returns_400_and_does_not_save(self):
+        original = self._valid_resume_content()
+        doc = GeneratedDocument.objects.create(
+            job_posting=self._job(), kind='resume', status='ready', content=original,
+        )
+        url = f'/api/documents/documents/{doc.pk}/'
+        missing_skills = {k: v for k, v in original.items() if k != 'skills'}
+        for content, expected in (
+            ({**original, 'foo': 1}, ['content.foo: unknown field']),
+            (missing_skills, ['content.skills: required']),
+        ):
+            response = self.client.patch(url, {'content': content}, format='json')
+            self.assertEqual(response.status_code, 400)
+            self.assertEqual(response.data['content'], expected)
+            doc.refresh_from_db()
+            self.assertEqual((doc.content, doc.edited), (original, False))
+
+    def test_patch_cover_letter_content_is_validated(self):
+        doc = GeneratedDocument.objects.create(
+            job_posting=self._job(), kind='cover_letter', status='ready',
+            content={'header': {'name': 'Ada'}}, markdown='old',
+        )
+        url = f'/api/documents/documents/{doc.pk}/'
+        response = self.client.patch(
+            url, {'content': {'header': {'name': 'Ada'}, 'body': 'x'}, 'markdown': 'new'}, format='json',
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data['content'], ['content.body: unknown field'])
+        doc.refresh_from_db()
+        self.assertEqual((doc.markdown, doc.edited, doc.content), ('old', False, {'header': {'name': 'Ada'}}))
+        response = self.client.patch(url, {'content': {'header': {'name': 'Grace'}}}, format='json')
+        self.assertEqual(response.status_code, 200)
+        doc.refresh_from_db()
+        self.assertEqual(doc.content['header']['name'], 'Grace')
+
+    def test_patch_accepts_full_resume_content_from_editor(self):
+        doc = GeneratedDocument.objects.create(
+            job_posting=self._job(), kind='resume', status='ready', content=self._valid_resume_content(),
+        )
+        content = {
+            'header': {'name': 'Ada', 'headline': 'Eng', 'email': 'a@b.c', 'phone': '1',
+                       'location': 'NYC', 'links': []},
+            'summary': 'Hello',
+            'experience': [{'company': 'Acme', 'title': 'Dev', 'location': '', 'start': '',
+                            'end': '', 'bullets': ['x']}],
+            'projects': [],
+            'education': [{'school': 'MIT', 'degree': '', 'start': '', 'end': '', 'details': []}],
+            'skills': [{'category': '', 'items': ['Python']}],
+        }
+        response = self.client.patch(f'/api/documents/documents/{doc.pk}/', {'content': content}, format='json')
+        self.assertEqual(response.status_code, 200)
+        doc.refresh_from_db()
+        self.assertTrue(doc.edited)
+
     def test_cannot_read_foreign_document(self):
         doc = GeneratedDocument.objects.create(job_posting=self._job(self.other), kind='resume')
         self.assertEqual(self.client.get(f'/api/documents/documents/{doc.pk}/').status_code, 404)
