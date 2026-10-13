@@ -1,5 +1,6 @@
 from unittest.mock import patch
 
+from django.core.cache import cache
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APITestCase
@@ -10,6 +11,7 @@ from users.models import Resume
 
 class ApiTestCase(APITestCase):
     def setUp(self):
+        cache.clear()
         User = get_user_model()
         self.user = User.objects.create_user('ada', password='x')
         self.other = User.objects.create_user('bob', password='x')
@@ -168,6 +170,7 @@ class JobAndGenerationTests(ApiTestCase):
         ParsedResume.objects.create(user=self.user, resume=resume)
         url = f'/api/documents/jobs/{job.pk}/generate/'
         self.assertEqual(self.client.post(url, {'resume_id': resume.pk}).status_code, 202)
+        GeneratedDocument.objects.filter(job_posting=job).update(status='ready')
         self.assertEqual(self.client.post(url, {'resume_id': resume.pk}).status_code, 202)
         for kind in ('resume', 'cover_letter'):
             versions = set(GeneratedDocument.objects.filter(job_posting=job, kind=kind).values_list('version', flat=True))

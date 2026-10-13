@@ -153,3 +153,19 @@ class GeneratedDocument(models.Model):
 
     def __str__(self):
         return f'{self.get_kind_display()} v{self.version} — {self.job_posting}'
+
+
+class ParseRequest(models.Model):
+    """One accepted resume analysis request; counted for the daily parse cap."""
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='parse_requests')
+    resume = models.ForeignKey(
+        'users.Resume', null=True, blank=True, on_delete=models.SET_NULL, related_name='parse_requests',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [models.Index(fields=['user', 'created_at'])]
+
+    def __str__(self):
+        return f'{self.user.username} — parse request {self.created_at:%Y-%m-%d %H:%M}'

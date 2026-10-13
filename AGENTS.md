@@ -238,7 +238,7 @@ JWT via `djangorestframework-simplejwt`. Tokens in httpOnly cookies, never local
 ### Auth: `/api/auth/`
 | Method | Path | Description |
 |---|---|---|
-| POST | `/register/`, `/login/`, `/logout/`, `/token/refresh/` | Auth |
+| POST | `/register/`, `/login/`, `/logout/`, `/token/refresh/` | Auth. Login (10/min per IP) and register (5/hour per IP) are throttled: 429 `{detail}` plus `Retry-After`. Refresh and logout are not |
 | GET | `/me/` | Current user |
 
 ### Users: `/api/users/`
@@ -249,7 +249,7 @@ JWT via `djangorestframework-simplejwt`. Tokens in httpOnly cookies, never local
 ### Documents: `/api/documents/` (all require auth, all scoped to the user)
 | Method | Path | Description |
 |---|---|---|
-| POST | `/resumes/<id>/parse/` | Queue analysis of a ready resume (202) |
+| POST | `/resumes/<id>/parse/` | Queue analysis of a ready resume (202). 409 if a parse of this resume was requested under 3 minutes ago and is still pending; 429 after 30 accepted analyses per user in a rolling 24 hours (`ParseRequest` rows). POST throttled at 10/hour per user (429 `{detail}` + `Retry-After`); GET is not |
 | GET | `/resumes/<id>/parse/` | Parsed content and layout (404 if not parsed) |
 | GET | `/resumes/parsed/` | Which resumes are parsed (no content) |
 | GET, PUT | `/cover-letter-sample/` | The default cover letter sample (`{body}`) |
@@ -257,7 +257,7 @@ JWT via `djangorestframework-simplejwt`. Tokens in httpOnly cookies, never local
 | DELETE | `/sources/<id>/` | Remove a source and its file |
 | GET, POST | `/jobs/` | List job postings (with documents); create one |
 | GET | `/jobs/<id>/` | One posting with its documents |
-| POST | `/jobs/<id>/generate/` | `{resume_id}`: create the pending rows, queue generation (202). Resume must be parsed; 503 if queueing fails (rows marked failed) |
+| POST | `/jobs/<id>/generate/` | `{resume_id}`: create the pending rows, queue generation (202). Resume must be parsed; 503 if queueing fails (rows marked failed). 409 if this job has pending documents under 5 minutes old; 429 after 30 generations per user in a rolling 24 hours. Throttled at 10/hour per user (429 `{detail}` + `Retry-After`) |
 | GET, PATCH | `/documents/<id>/` | Read a document (includes read-only `resume`); save the user's edits (sets `edited`). PATCH: 409 unless `ready`, 400 `{content: [...]}` on malformed content |
 | GET | `/documents/<id>/preview/` | The document as HTML |
 | GET | `/documents/<id>/export/` | PDF download; `X-Page-Count` header |
@@ -277,7 +277,9 @@ Non-secret constants live in `callback/config.py` and are imported into `setting
 - Hardcoded constant: `config.py`.
 - Secret: `.env` only, never committed.
 
-Application code imports constants from `callback.config`, not `django.conf.settings`, unless Django itself requires the value there. Do not define `CELERY_BEAT_SCHEDULE` (scheduling is DB-backed via `django-celery-beat`; only the parked pipeline uses it).
+Application code imports constants from `callback.config`, not `django.conf.settings`, unless Django itself requires the value there. Throttle rates, daily caps and in-flight windows are in `config.py`. `PARSE_INFLIGHT_MINUTES` and `GENERATION_INFLIGHT_MINUTES` must match `PARSE_POLL_TIMEOUT_MS` (profile page) and `GENERATION_POLL_TIMEOUT_MS` (job page) and stay below the `*_STALE_AFTER_MINUTES` values. `NUM_PROXIES` (env, default 0) is the number of reverse proxies in front of Django; with 0 the client IP is `REMOTE_ADDR` and `X-Forwarded-For` is ignored. The browser reaches Django only through the Next.js rewrite, so 0 means one site-wide login/register bucket; do not ship 0. Do not simply set it to the proxy count (1) either: Next keeps a client-supplied `X-Forwarded-For`, so an edge proxy must overwrite it and Django's port must not be public (see the open deployment decision). `CACHE_URL` (env, optional redis URL) shares throttle counters across workers; unset means per-process LocMem.
+
+Do not define `CELERY_BEAT_SCHEDULE` (scheduling is DB-backed via `django-celery-beat`; only the parked pipeline uses it).
 
 ---
 

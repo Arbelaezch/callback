@@ -1,6 +1,7 @@
 import logging
 import os
 
+from django.db import transaction
 from django.http import HttpResponse
 from django.utils import timezone
 from rest_framework import status
@@ -8,12 +9,29 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from callback.config import CONTEXT_UPLOAD_EXTENSIONS, CONTEXT_UPLOAD_MAX_BYTES
+from callback.throttles import ReadableThrottleMixin
+from callback.config import (
+    CONTEXT_UPLOAD_EXTENSIONS,
+    CONTEXT_UPLOAD_MAX_BYTES,
+    DAILY_GENERATION_LIMIT,
+    DAILY_PARSE_LIMIT,
+)
 from pipeline.storage import delete_resume, upload_context_document
 from users.models import CoverLetterSample, Resume
 
 from .generation import create_pending_documents
-from .models import ContextSource, GeneratedDocument, JobPosting, ParsedResume
+from .limits import (
+    DAILY_GENERATION_LIMIT_ERROR,
+    DAILY_PARSE_LIMIT_ERROR,
+    GENERATION_IN_FLIGHT_ERROR,
+    PARSE_IN_FLIGHT_ERROR,
+    generation_in_flight,
+    generations_last_day,
+    lock_user,
+    parse_in_flight,
+    parses_last_day,
+)
+from .models import ContextSource, GeneratedDocument, JobPosting, ParsedResume, ParseRequest
 from .rendering import html_to_pdf, render_cover_letter_html, render_resume_html
 from .serializers import (
     ContextSourceSerializer,
@@ -23,16 +41,17 @@ from .serializers import (
     ParsedResumeSummarySerializer,
 )
 from .services import index_upload_source
-from .staleness import fail_stale_documents
+from .staleness import fail_stale_documents, fail_stale_parses
 from .tasks import generate_documents_task, parse_resume_task
 from .validation import validate_document_content
 
 logger = logging.getLogger(__name__)
 
 
-class ResumeParseView(APIView):
+class ResumeParseView(ReadableThrottleMixin, APIView):
     """POST queues analysis of a ready resume; GET returns the parsed result."""
     permission_classes = [IsAuthenticated]
+    throttle_scope = 'parse'
 
     def _resume(self, request, resume_id):
         return Resume.objects.filter(pk=resume_id, user=request.user).first()
@@ -49,10 +68,20 @@ class ResumeParseView(APIView):
             return Response({'detail': 'Resume not found.'}, status=status.HTTP_404_NOT_FOUND)
         if resume.status != 'ready':
             return Response({'detail': 'Resume is not ready.'}, status=status.HTTP_400_BAD_REQUEST)
-        resume.parse_status = 'pending'
-        resume.parse_error = ''
-        resume.parse_requested_at = timezone.now()
-        resume.save(update_fields=['parse_status', 'parse_error', 'parse_requested_at'])
+        fail_stale_parses(request.user)
+        with transaction.atomic():
+            lock_user(request.user)
+            resume = Resume.objects.get(pk=resume.pk)
+            if parse_in_flight(resume):
+                return Response({'detail': PARSE_IN_FLIGHT_ERROR}, status=status.HTTP_409_CONFLICT)
+            if parses_last_day(request.user) >= DAILY_PARSE_LIMIT:
+                return Response({'detail': DAILY_PARSE_LIMIT_ERROR}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+            resume.parse_status = 'pending'
+            resume.parse_error = ''
+            resume.parse_requested_at = timezone.now()
+            resume.save(update_fields=['parse_status', 'parse_error', 'parse_requested_at'])
+            ParseRequest.objects.create(user=request.user, resume=resume)
+        # If queueing fails the ParseRequest row stays, so it still counts toward the daily cap.
         try:
             parse_resume_task.delay(resume.pk)
         except Exception:
@@ -180,9 +209,10 @@ class JobPostingDetailView(APIView):
         return Response(JobPostingSerializer(posting).data)
 
 
-class GenerateView(APIView):
+class GenerateView(ReadableThrottleMixin, APIView):
     """POST {resume_id} queues generation of a tailored resume and cover letter."""
     permission_classes = [IsAuthenticated]
+    throttle_scope = 'generate'
 
     def post(self, request, job_id):
         posting = JobPosting.objects.filter(pk=job_id, user=request.user).first()
@@ -201,7 +231,16 @@ class GenerateView(APIView):
                 {'detail': 'That resume has not been parsed yet.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        resume_doc, letter_doc = create_pending_documents(posting, parsed.resume)
+        fail_stale_documents(request.user)
+        with transaction.atomic():
+            lock_user(request.user)
+            if generation_in_flight(posting):
+                return Response({'detail': GENERATION_IN_FLIGHT_ERROR}, status=status.HTTP_409_CONFLICT)
+            if generations_last_day(request.user) >= DAILY_GENERATION_LIMIT:
+                return Response(
+                    {'detail': DAILY_GENERATION_LIMIT_ERROR}, status=status.HTTP_429_TOO_MANY_REQUESTS,
+                )
+            resume_doc, letter_doc = create_pending_documents(posting, parsed.resume)
         try:
             generate_documents_task.delay(resume_doc.pk, letter_doc.pk)
         except Exception:

@@ -84,3 +84,26 @@ CELERY_TIMEZONE = 'UTC'
 # Pending rows older than this are treated as lost, because the worker died.
 PARSE_STALE_AFTER_MINUTES = 10
 GENERATION_STALE_AFTER_MINUTES = 20
+
+
+# -----------------------------------------------------------------
+# Rate limits
+# -----------------------------------------------------------------
+
+# DRF throttle rates. Parse and generate are per user, login and register per IP.
+# Token refresh and logout are intentionally not throttled.
+THROTTLE_RATE_PARSE = '10/hour'
+THROTTLE_RATE_GENERATE = '10/hour'
+THROTTLE_RATE_LOGIN = '10/min'
+THROTTLE_RATE_REGISTER = '5/hour'
+
+# Daily caps, counted from DB rows over a rolling 24 hours, per user.
+DAILY_PARSE_LIMIT = 30
+DAILY_GENERATION_LIMIT = 30
+
+# In-flight guards: a second request within this window gets a 409.
+# Both must stay below the *_STALE_AFTER_MINUTES values above.
+# Must match GENERATION_POLL_TIMEOUT_MS in frontend/src/app/jobs/[id]/page.js.
+GENERATION_INFLIGHT_MINUTES = 5
+# Must match PARSE_POLL_TIMEOUT_MS in frontend/src/app/profile/page.js.
+PARSE_INFLIGHT_MINUTES = 3
