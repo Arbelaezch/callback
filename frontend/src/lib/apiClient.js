@@ -1,5 +1,4 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL;
-// console.log('[apiClient] API_URL=', process.env.NEXT_PUBLIC_API_URL);
 
 /**
  * Core fetch wrapper. All API calls go through here.

@@ -16,6 +16,7 @@ from .serializers import (
 )
 from .models import CoverLetterSample, Portfolio, Resume
 from jobs.models import Agent, Search
+from callback.config import RESUME_UPLOAD_MAX_BYTES
 from pipeline.storage import upload_resume
 from documents.staleness import fail_stale_parses
 
@@ -98,7 +99,9 @@ class LoginView(APIView):
 
 
 class LogoutView(APIView):
-    permission_classes = [IsAuthenticated]
+    # Must work with an expired or stale access cookie, so it never authenticates.
+    authentication_classes = []
+    permission_classes = [AllowAny]
 
     def post(self, request):
         try:
@@ -208,7 +211,7 @@ class RefreshView(APIView):
     def post(self, request):
         refresh_token = request.COOKIES.get('refresh_token')
         if not refresh_token:
-            return Response({'detail': 'No refresh token.'}, status=status.HTTP_401_UNAUTHORIZED)
+            return self._unauthorized('No refresh token.')
 
         try:
             refresh = RefreshToken(refresh_token)
@@ -216,7 +219,14 @@ class RefreshView(APIView):
             set_auth_cookies(response, refresh.access_token, refresh)
             return response
         except TokenError:
-            return Response({'detail': 'Invalid refresh token.'}, status=status.HTTP_401_UNAUTHORIZED)
+            return self._unauthorized('Invalid refresh token.')
+
+    @staticmethod
+    def _unauthorized(detail):
+        # Clear stale cookies so the user is not stuck behind the /login redirect.
+        response = Response({'detail': detail}, status=status.HTTP_401_UNAUTHORIZED)
+        clear_auth_cookies(response)
+        return response
 
 
 class ResumeUploadView(APIView):
@@ -233,10 +243,14 @@ class ResumeUploadView(APIView):
         file = request.FILES.get('resume')
         if not file:
             return Response({'detail': 'No file provided.'}, status=status.HTTP_400_BAD_REQUEST)
-        if not file.name.endswith('.pdf'):
+        if not file.name.lower().endswith('.pdf'):
             return Response({'detail': 'Resume must be a PDF.'}, status=status.HTTP_400_BAD_REQUEST)
-        if file.size > 5 * 1024 * 1024:
+        if file.size > RESUME_UPLOAD_MAX_BYTES:
             return Response({'detail': 'Resume must be under 5MB.'}, status=status.HTTP_400_BAD_REQUEST)
+        header = file.read(5)
+        file.seek(0)
+        if header != b'%PDF-':
+            return Response({'detail': 'Resume must be a PDF.'}, status=status.HTTP_400_BAD_REQUEST)
 
         label = request.data.get('label', '')
 

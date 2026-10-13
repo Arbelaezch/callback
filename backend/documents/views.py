@@ -12,6 +12,7 @@ from callback.config import CONTEXT_UPLOAD_EXTENSIONS, CONTEXT_UPLOAD_MAX_BYTES
 from pipeline.storage import delete_resume, upload_context_document
 from users.models import CoverLetterSample, Resume
 
+from .generation import create_pending_documents
 from .models import ContextSource, GeneratedDocument, JobPosting, ParsedResume
 from .rendering import html_to_pdf, render_cover_letter_html, render_resume_html
 from .serializers import (
@@ -24,6 +25,7 @@ from .serializers import (
 from .services import index_upload_source
 from .staleness import fail_stale_documents
 from .tasks import generate_documents_task, parse_resume_task
+from .validation import validate_document_content
 
 logger = logging.getLogger(__name__)
 
@@ -191,12 +193,24 @@ class GenerateView(APIView):
             resume_id = int(request.data.get('resume_id'))
         except (TypeError, ValueError):
             return Response({'detail': 'resume_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
-        if not ParsedResume.objects.filter(resume_id=resume_id, user=request.user).exists():
+        parsed = ParsedResume.objects.filter(
+            resume_id=resume_id, user=request.user,
+        ).select_related('resume').first()
+        if parsed is None:
             return Response(
                 {'detail': 'That resume has not been parsed yet.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        generate_documents_task.delay(posting.pk, resume_id)
+        resume_doc, letter_doc = create_pending_documents(posting, parsed.resume)
+        try:
+            generate_documents_task.delay(resume_doc.pk, letter_doc.pk)
+        except Exception:
+            logger.exception('Could not queue generation for job posting %s', posting.pk)
+            detail = 'Could not start generation. Please try again.'
+            GeneratedDocument.objects.filter(pk__in=[resume_doc.pk, letter_doc.pk]).update(
+                status='failed', error=detail, updated_at=timezone.now(),
+            )
+            return Response({'detail': detail}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         return Response({'detail': 'Generation started.'}, status=status.HTTP_202_ACCEPTED)
 
 
@@ -219,6 +233,12 @@ class GeneratedDocumentView(APIView):
         document = self._document(request, document_id)
         if document is None:
             return Response({'detail': 'Document not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if document.status != 'ready':
+            return Response({'detail': 'Document is not ready.'}, status=status.HTTP_409_CONFLICT)
+        if 'content' in request.data:
+            errors = validate_document_content(document.kind, request.data['content'])
+            if errors:
+                return Response({'content': errors}, status=status.HTTP_400_BAD_REQUEST)
         serializer = GeneratedDocumentSerializer(document, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save(edited=True)

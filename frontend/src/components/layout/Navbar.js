@@ -9,7 +9,7 @@ import { useAuth } from '@/contexts/AuthContext';
  * Navbar — shown on all authenticated pages via layout.
  * Shows:
  *   - Unauthenticated: app name + Login button
- *   - Authenticated:   app name + username + Profile link + Logout button
+ *   - Authenticated:   app name + username + Jobs, New job and Profile links + Logout button
  *
  * Reads auth state from AuthContext via useAuth().
  * Redirects to /login after logout.
@@ -39,6 +39,14 @@ export default function Navbar() {
         ) : user ? (
           <>
             <span className="text-muted-foreground hidden sm:inline">{user.username}</span>
+
+            <Link href="/jobs" className="rounded-md px-3 py-1.5 border border-input text-foreground hover:bg-muted transition-colors">
+              Jobs
+            </Link>
+
+            <Link href="/jobs/new" className="rounded-md px-3 py-1.5 border border-input text-foreground hover:bg-muted transition-colors">
+              New job
+            </Link>
 
             <Link
               href="/profile"

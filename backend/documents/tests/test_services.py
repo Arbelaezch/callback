@@ -71,3 +71,33 @@ class ParseResumeTests(TestCase):
         self.assertEqual(resume.parse_status, 'ready')
         self.assertEqual(resume.parse_error, '')
 
+
+    @patch('documents.services.read_file', return_value=b'%PDF')
+    @patch('documents.services.analyze_resume', return_value=ANALYSIS)
+    def test_parse_does_not_clear_a_newer_default(self, analyze, read):
+        a = Resume.objects.create(
+            user=self.user, s3_key='a', filename='a.pdf', status='ready', is_default=True,
+        )
+        stale_a = Resume.objects.get(pk=a.pk)
+        b = Resume.objects.create(
+            user=self.user, s3_key='b', filename='b.pdf', status='ready', is_default=True,
+        )
+        parse_resume(stale_a)
+        b.refresh_from_db()
+        a.refresh_from_db()
+        self.assertTrue(b.is_default)
+        self.assertFalse(a.is_default)
+        self.assertEqual(a.parse_status, 'ready')
+
+    @patch('documents.services.read_file', return_value=b'%PDF')
+    @patch('documents.services.analyze_resume')
+    def test_parse_reraises_original_error_when_resume_deleted_mid_parse(self, analyze, read):
+        resume = self._resume()
+
+        def delete_then_fail(_):
+            Resume.objects.filter(pk=resume.pk).delete()
+            raise RuntimeError('model said no')
+
+        analyze.side_effect = delete_then_fail
+        with self.assertRaises(RuntimeError):
+            parse_resume(resume)

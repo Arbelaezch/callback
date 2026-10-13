@@ -3,6 +3,7 @@ from datetime import timedelta
 from django.utils import timezone
 
 from documents.models import GeneratedDocument, JobPosting
+from users.models import Resume
 from documents.staleness import STALE_GENERATION_ERROR, STALE_PARSE_ERROR
 
 from .test_api import ApiTestCase
@@ -36,6 +37,20 @@ class StaleParseTests(ApiTestCase):
         resume.refresh_from_db()
         self.assertEqual(resume.parse_status, 'pending')
 
+    def test_old_ready_and_failed_parses_are_untouched(self):
+        ready = self._resume()
+        failed = self._resume()
+        old = timezone.now() - timedelta(minutes=30)
+        Resume.objects.filter(pk=ready.pk).update(
+            parse_status='ready', parse_error='', parse_requested_at=old)
+        Resume.objects.filter(pk=failed.pk).update(
+            parse_status='failed', parse_error='boom', parse_requested_at=old)
+        self.client.get('/api/users/resumes/')
+        ready.refresh_from_db()
+        failed.refresh_from_db()
+        self.assertEqual((ready.parse_status, ready.parse_error), ('ready', ''))
+        self.assertEqual((failed.parse_status, failed.parse_error), ('failed', 'boom'))
+
 
 class StaleDocumentTests(ApiTestCase):
     def _job(self, minutes_ago, user=None, status='pending'):
@@ -62,6 +77,14 @@ class StaleDocumentTests(ApiTestCase):
             set(GeneratedDocument.objects.filter(job_posting=job).values_list('error', flat=True)),
             {STALE_GENERATION_ERROR},
         )
+
+    def test_stale_pending_documents_are_failed_on_job_list(self):
+        job = self._job(21)
+        response = self.client.get('/api/documents/jobs/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self._statuses(job), {'failed'})
+        for doc in response.data[0]['documents']:
+            self.assertEqual(doc['error'], STALE_GENERATION_ERROR)
 
     def test_recent_pending_documents_are_untouched(self):
         job = self._job(2)

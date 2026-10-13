@@ -3,7 +3,9 @@ from unittest.mock import patch
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 
-from documents.generation import generate_documents
+from documents.generation import create_pending_documents, generate_documents
+from documents.models import GeneratedDocument
+from documents.tasks import generate_documents_task
 from documents.models import ContextSource, JobPosting, ParsedResume, VoiceProfile
 from users.models import Resume
 
@@ -27,7 +29,8 @@ class GenerateDocumentsTests(TestCase):
                    return_value={'notes': 'warm', 'excerpts': ['hi']}) as voice, \
              patch('documents.generation.write_documents', return_value=WRITTEN) as write, \
              patch('documents.generation.verify_documents', return_value=claims):
-            docs = generate_documents(self.job, self.parsed, 'old letter')
+            resume_doc, letter_doc = create_pending_documents(self.job, self.parsed.resume)
+            docs = generate_documents(resume_doc, letter_doc, self.parsed, 'old letter')
         return docs, run_scout, voice, write
 
     def test_stores_both_documents_with_flagged_claims(self):
@@ -68,14 +71,62 @@ class GenerateDocumentsTests(TestCase):
         self.assertEqual(VoiceProfile.objects.get(user=self.user).notes, 'warm')
 
     def test_versions_increment_per_run(self):
+        create_pending_documents(self.job, self.parsed.resume)
+        resume_doc, letter_doc = create_pending_documents(self.job, self.parsed.resume)
+        self.assertEqual((resume_doc.version, letter_doc.version), (2, 2))
+        self.assertEqual(resume_doc.resume_id, self.parsed.resume_id)
+
+    def test_fills_given_rows_without_creating_new_ones(self):
         self._run()
-        (resume_doc, _), *_ = self._run()
-        self.assertEqual(resume_doc.version, 2)
+        self.assertEqual(self.job.documents.count(), 2)
 
     def test_stage_failure_marks_documents_failed(self):
         with patch('documents.generation.run_scout', side_effect=RuntimeError('api down')):
             with self.assertRaises(RuntimeError):
-                generate_documents(self.job, self.parsed)
+                resume_doc, letter_doc = create_pending_documents(self.job, self.parsed.resume)
+                generate_documents(resume_doc, letter_doc, self.parsed)
         statuses = set(self.job.documents.values_list('status', flat=True))
         self.assertEqual(statuses, {'failed'})
         self.assertEqual(self.job.documents.first().error, 'api down')
+
+
+class GenerateDocumentsTaskTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user('ada', password='x')
+        self.job = JobPosting.objects.create(
+            user=self.user, title='Backend Engineer', company='Acme', description='Django',
+        )
+
+    def test_task_fails_both_rows_when_resume_is_gone(self):
+        resume_doc, letter_doc = create_pending_documents(self.job, None)
+        generate_documents_task(resume_doc.pk, letter_doc.pk)
+        for doc in GeneratedDocument.objects.filter(job_posting=self.job):
+            self.assertEqual(doc.status, 'failed')
+            self.assertIn('no longer available', doc.error)
+
+    def test_task_returns_quietly_when_rows_are_gone(self):
+        generate_documents_task(999998, 999999)
+
+    def test_task_skips_rows_that_are_no_longer_pending(self):
+        resume_doc, letter_doc = create_pending_documents(self.job, None)
+        GeneratedDocument.objects.filter(job_posting=self.job).update(status='failed', error='x')
+        with patch('documents.generation.generate_documents') as gen:
+            generate_documents_task(resume_doc.pk, letter_doc.pk)
+        gen.assert_not_called()
+        self.assertEqual(set(GeneratedDocument.objects.values_list('status', flat=True)), {'failed'})
+
+    def test_task_uses_parsed_resume_and_sample_for_the_version(self):
+        from users.models import CoverLetterSample
+
+        first = Resume.objects.create(user=self.user, s3_key='a', filename='a.pdf', status='ready')
+        second = Resume.objects.create(user=self.user, s3_key='b', filename='b.pdf', status='ready')
+        ParsedResume.objects.create(user=self.user, resume=first, content=RESUME)
+        parsed_second = ParsedResume.objects.create(user=self.user, resume=second, content=RESUME)
+        CoverLetterSample.objects.create(user=self.user, body='my sample', is_default=True)
+        resume_doc, letter_doc = create_pending_documents(self.job, second)
+        with patch('documents.generation.generate_documents') as gen:
+            generate_documents_task(resume_doc.pk, letter_doc.pk)
+        args = gen.call_args.args
+        self.assertEqual((args[0].pk, args[1].pk), (resume_doc.pk, letter_doc.pk))
+        self.assertEqual(args[2], parsed_second)
+        self.assertEqual(args[3], 'my sample')

@@ -63,9 +63,11 @@ export default function DocumentWorkspace({ doc, company }) {
       setSaveState('saved');
       setError(null);
       refreshPreview();
+      return true;
     } catch (err) {
       setSaveState('error');
       setError(err?.detail || 'Could not save your changes.');
+      return false;
     }
   }, [doc.id, isResume, refreshPreview]);
 
@@ -86,7 +88,7 @@ export default function DocumentWorkspace({ doc, company }) {
     setExporting(true);
     setError(null);
     try {
-      if (dirty) await save();
+      if (dirty && !(await save())) return;
       const { blob, pageCount: pages } = await apiClient.getBlob(
         `/api/documents/documents/${doc.id}/export/`,
       );

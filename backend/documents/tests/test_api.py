@@ -138,24 +138,89 @@ class JobAndGenerationTests(ApiTestCase):
         self.assertEqual(self.client.post(url, {'resume_id': resume.pk}).status_code, 400)
         ParsedResume.objects.create(user=self.user, resume=resume)
         self.assertEqual(self.client.post(url, {'resume_id': resume.pk}).status_code, 202)
-        delay.assert_called_once_with(job.pk, resume.pk)
+        docs = GeneratedDocument.objects.filter(job_posting=job)
+        self.assertEqual(docs.count(), 2)
+        self.assertEqual(set(docs.values_list('status', flat=True)), {'pending'})
+        self.assertEqual(set(docs.values_list('resume_id', flat=True)), {resume.pk})
+        self.assertEqual(set(docs.values_list('version', flat=True)), {1})
+        resume_doc = docs.get(kind='resume')
+        letter_doc = docs.get(kind='cover_letter')
+        delay.assert_called_once_with(resume_doc.pk, letter_doc.pk)
+
+    @patch('documents.views.generate_documents_task.delay', side_effect=Exception('broker down'))
+    def test_generate_returns_503_and_fails_rows_when_queueing_fails(self, delay):
+        job, resume = self._job(), self._resume()
+        ParsedResume.objects.create(user=self.user, resume=resume)
+        response = self.client.post(f'/api/documents/jobs/{job.pk}/generate/', {'resume_id': resume.pk})
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.data['detail'], 'Could not start generation. Please try again.')
+        docs = GeneratedDocument.objects.filter(job_posting=job)
+        self.assertEqual(docs.count(), 2)
+        self.assertEqual(set(docs.values_list('status', flat=True)), {'failed'})
+        self.assertEqual(
+            set(docs.values_list('error', flat=True)),
+            {'Could not start generation. Please try again.'},
+        )
+
+    @patch('documents.views.generate_documents_task.delay')
+    def test_generate_again_increments_version(self, delay):
+        job, resume = self._job(), self._resume()
+        ParsedResume.objects.create(user=self.user, resume=resume)
+        url = f'/api/documents/jobs/{job.pk}/generate/'
+        self.assertEqual(self.client.post(url, {'resume_id': resume.pk}).status_code, 202)
+        self.assertEqual(self.client.post(url, {'resume_id': resume.pk}).status_code, 202)
+        for kind in ('resume', 'cover_letter'):
+            versions = set(GeneratedDocument.objects.filter(job_posting=job, kind=kind).values_list('version', flat=True))
+            self.assertEqual(versions, {1, 2})
+
+    def test_job_detail_exposes_document_resume(self):
+        job, resume = self._job(), self._resume()
+        GeneratedDocument.objects.create(job_posting=job, kind='resume', resume=resume)
+        response = self.client.get(f'/api/documents/jobs/{job.pk}/')
+        self.assertEqual(response.data['documents'][0]['resume'], resume.pk)
 
     def test_cannot_generate_for_foreign_job(self):
         job = self._job(self.other)
         self.assertEqual(self.client.post(f'/api/documents/jobs/{job.pk}/generate/', {}).status_code, 404)
 
     def test_patch_saves_edits_and_marks_edited(self):
-        doc = GeneratedDocument.objects.create(job_posting=self._job(), kind='cover_letter', markdown='old')
+        doc = GeneratedDocument.objects.create(
+            job_posting=self._job(), kind='cover_letter', markdown='old', status='ready',
+        )
         response = self.client.patch(f'/api/documents/documents/{doc.pk}/', {'markdown': 'new'})
         self.assertEqual(response.status_code, 200)
         doc.refresh_from_db()
         self.assertEqual((doc.markdown, doc.edited), ('new', True))
 
     def test_patch_cannot_change_read_only_fields(self):
-        doc = GeneratedDocument.objects.create(job_posting=self._job(), kind='resume')
-        self.client.patch(f'/api/documents/documents/{doc.pk}/', {'status': 'ready', 'kind': 'cover_letter'})
+        doc = GeneratedDocument.objects.create(job_posting=self._job(), kind='resume', status='ready')
+        self.client.patch(f'/api/documents/documents/{doc.pk}/', {'status': 'failed', 'kind': 'cover_letter'})
         doc.refresh_from_db()
-        self.assertEqual((doc.status, doc.kind), ('pending', 'resume'))
+        self.assertEqual((doc.status, doc.kind), ('ready', 'resume'))
+
+    def test_patch_on_pending_or_failed_document_returns_409(self):
+        job = self._job()
+        for doc_status in ('pending', 'failed'):
+            doc = GeneratedDocument.objects.create(
+                job_posting=job, kind='cover_letter', markdown='old', status=doc_status,
+            )
+            response = self.client.patch(f'/api/documents/documents/{doc.pk}/', {'markdown': 'new'})
+            self.assertEqual(response.status_code, 409)
+            self.assertEqual(response.data['detail'], 'Document is not ready.')
+            doc.refresh_from_db()
+            self.assertEqual((doc.markdown, doc.edited), ('old', False))
+
+    def test_patch_with_malformed_content_returns_400_and_does_not_save(self):
+        doc = GeneratedDocument.objects.create(
+            job_posting=self._job(), kind='resume', status='ready', content={'summary': 'old'},
+        )
+        response = self.client.patch(
+            f'/api/documents/documents/{doc.pk}/', {'content': ['x']}, format='json',
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data['content'], ['content: expected object'])
+        doc.refresh_from_db()
+        self.assertEqual((doc.content, doc.edited), ({'summary': 'old'}, False))
 
     def test_cannot_read_foreign_document(self):
         doc = GeneratedDocument.objects.create(job_posting=self._job(self.other), kind='resume')

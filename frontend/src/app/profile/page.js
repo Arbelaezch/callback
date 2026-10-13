@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { apiClient } from '@/lib/apiClient';
 import { useApiResource } from '@/hooks/useApiResource';
@@ -37,6 +37,13 @@ function ResumeSection({ parsedIds, reloadParsed }) {
   // In-progress state comes from the server, so a page refresh still shows it.
   const isWaiting = (resumes.data || []).some((r) => r.parse_status === 'pending');
   const reloadResumes = resumes.reload;
+
+  // Reload the parsed list once more after the last pending resume clears.
+  const wasWaiting = useRef(false);
+  useEffect(() => {
+    if (wasWaiting.current && !isWaiting) reloadParsed();
+    wasWaiting.current = isWaiting;
+  }, [isWaiting, reloadParsed]);
 
   useEffect(() => {
     if (!isWaiting || timedOut) return undefined;
@@ -90,7 +97,7 @@ function ResumeSection({ parsedIds, reloadParsed }) {
 
       <ul className="space-y-2">
         {(resumes.data || []).map((resume) => {
-          const parsed = parsedIds.has(resume.id);
+          const parsed = resume.parse_status === 'ready' || parsedIds.has(resume.id);
           const pending = resume.parse_status === 'pending';
           const failed = resume.parse_status === 'failed';
           const retry = (
