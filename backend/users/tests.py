@@ -2,7 +2,10 @@ from datetime import timedelta
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
+from django.conf import settings
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import override_settings
 from django.utils import timezone
 from rest_framework.test import APITestCase
 from rest_framework_simplejwt.exceptions import TokenError
@@ -15,6 +18,7 @@ from users.models import Resume
 
 class ResumeUploadTests(APITestCase):
     def setUp(self):
+        cache.clear()
         self.user = get_user_model().objects.create_user('ada', password='x')
         self.client.force_authenticate(self.user)
 
@@ -53,6 +57,7 @@ class ResumeUploadTests(APITestCase):
 
 class AuthCookieTests(APITestCase):
     def setUp(self):
+        cache.clear()
         self.user = get_user_model().objects.create_user('grace', password='x')
 
     def _assert_cleared(self, response):
@@ -163,3 +168,67 @@ class AuthCookieTests(APITestCase):
         response = self._refresh_with(token)
         self.assertEqual(response.status_code, 401)
         self._assert_cleared(response)
+
+
+NO_PROXY = {**settings.REST_FRAMEWORK, 'NUM_PROXIES': 0}
+ONE_PROXY = {**settings.REST_FRAMEWORK, 'NUM_PROXIES': 1}
+
+
+@override_settings(REST_FRAMEWORK=NO_PROXY)
+class AuthThrottleTests(APITestCase):
+    def setUp(self):
+        cache.clear()
+        get_user_model().objects.create_user('linus', password='right')
+
+    def _login(self, password='wrong', **extra):
+        return self.client.post(
+            '/api/auth/login/', {'username': 'linus', 'password': password}, **extra
+        )
+
+    def test_login_throttled_after_ten_attempts(self):
+        for _ in range(10):
+            self.assertEqual(self._login().status_code, 401)
+        response = self._login('right')
+        self.assertEqual(response.status_code, 429)
+        self.assertTrue(response.data['detail'].startswith('Too many requests.'))
+
+    def test_other_ip_not_throttled(self):
+        for _ in range(11):
+            self._login()
+        self.assertEqual(self._login('right', REMOTE_ADDR='10.0.0.2').status_code, 200)
+
+    def test_spoofed_forwarded_for_does_not_bypass(self):
+        for i in range(10):
+            self._login(HTTP_X_FORWARDED_FOR=f'1.2.3.{i}')
+        response = self._login('right', HTTP_X_FORWARDED_FOR='9.9.9.9')
+        self.assertEqual(response.status_code, 429)
+
+    @override_settings(REST_FRAMEWORK=ONE_PROXY)
+    def test_one_proxy_keys_on_last_forwarded_hop(self):
+        for _ in range(10):
+            self._login(HTTP_X_FORWARDED_FOR='6.6.6.6, 1.1.1.1')
+        # Same trusted hop, spoofed leading entry: still throttled.
+        self.assertEqual(
+            self._login('right', HTTP_X_FORWARDED_FOR='7.7.7.7, 1.1.1.1').status_code, 429
+        )
+        # A different client behind the proxy has its own bucket.
+        self.assertEqual(
+            self._login('right', HTTP_X_FORWARDED_FOR='7.7.7.7, 2.2.2.2').status_code, 200
+        )
+
+    def test_register_throttled_after_five(self):
+        for i in range(5):
+            response = self.client.post(
+                '/api/auth/register/',
+                {'username': f'new{i}', 'email': f'new{i}@example.com', 'password': 'Str0ngPass!word'},
+            )
+            self.assertEqual(response.status_code, 201, response.data)
+        response = self.client.post(
+            '/api/auth/register/',
+            {'username': 'new6', 'email': 'new6@example.com', 'password': 'Str0ngPass!word'},
+        )
+        self.assertEqual(response.status_code, 429)
+
+    def test_refresh_never_throttled(self):
+        for _ in range(15):
+            self.assertEqual(self.client.post('/api/auth/token/refresh/').status_code, 401)

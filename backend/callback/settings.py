@@ -110,7 +110,37 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': (
         'rest_framework.permissions.IsAuthenticated',
     ),
+    # No-op for views without a throttle_scope; views opt in.
+    'DEFAULT_THROTTLE_CLASSES': (
+        'callback.throttles.PostScopedRateThrottle',
+    ),
+    'DEFAULT_THROTTLE_RATES': {
+        'parse': config.THROTTLE_RATE_PARSE,
+        'generate': config.THROTTLE_RATE_GENERATE,
+        'login': config.THROTTLE_RATE_LOGIN,
+        'register': config.THROTTLE_RATE_REGISTER,
+    },
+    # Number of reverse proxies in front of the app. 0 uses REMOTE_ADDR and
+    # ignores X-Forwarded-For (immune to header spoofing), but behind the Next.js
+    # rewrite that means one shared login/register bucket for the whole site.
+    # 1 is only safe if an edge proxy overwrites X-Forwarded-For and Django's
+    # port is not public. See AGENTS.md (Settings).
+    'NUM_PROXIES': int(os.environ.get('NUM_PROXIES', '0')),
 }
+
+# -----------------------------------------------------------------
+# Cache
+# -----------------------------------------------------------------
+# Throttle counters live in the cache. Django's default LocMem cache is per
+# process, so with several gunicorn workers each keeps its own counters. Set
+# CACHE_URL to a redis URL to share them.
+if os.environ.get('CACHE_URL'):
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+            'LOCATION': os.environ['CACHE_URL'],
+        }
+    }
 
 # -----------------------------------------------------------------
 # Simple JWT

@@ -9,6 +9,7 @@ import DocumentWorkspace from '@/components/documents/DocumentWorkspace';
 import { secondaryButtonClass } from '@/components/ui/styles';
 
 const POLL_MS = 3000;
+// Must match GENERATION_INFLIGHT_MINUTES in backend/callback/config.py, so "generate again" is not answered with a 409.
 const GENERATION_POLL_TIMEOUT_MS = 5 * 60 * 1000;
 const TABS = [
   { kind: 'resume', label: 'Resume' },
@@ -64,6 +65,8 @@ export default function JobPage() {
       reloadJob();
     } catch (err) {
       setError(err?.detail || 'Could not start generation.');
+      // Another request already started this job; show its pending documents.
+      if (err?.status === 409) reloadJob();
     } finally {
       setRegenerating(false);
     }

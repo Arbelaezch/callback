@@ -5,6 +5,7 @@ from .models import (
     GeneratedDocument,
     JobPosting,
     ParsedResume,
+    ParseRequest,
     SourceDocumentSection,
     VoiceProfile,
 )
@@ -45,3 +46,9 @@ class GeneratedDocumentAdmin(admin.ModelAdmin):
     list_display = ('job_posting', 'kind', 'version', 'status', 'edited', 'created_at')
     list_filter = ('kind', 'status', 'edited')
     readonly_fields = ('created_at', 'updated_at')
+
+
+@admin.register(ParseRequest)
+class ParseRequestAdmin(admin.ModelAdmin):
+    list_display = ('user', 'resume', 'created_at')
+    readonly_fields = ('created_at',)

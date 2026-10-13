@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/styles';
 
 const POLL_MS = 3000;
+// Must match PARSE_INFLIGHT_MINUTES in backend/callback/config.py, so Retry is not answered with a 409.
 const PARSE_POLL_TIMEOUT_MS = 3 * 60 * 1000;
 
 function errorText(err, fallback) {
@@ -33,6 +34,7 @@ function ResumeSection({ parsedIds, reloadParsed }) {
   const [error, setError] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [timedOut, setTimedOut] = useState(false);
+  const [analyzingId, setAnalyzingId] = useState(null);
 
   // In-progress state comes from the server, so a page refresh still shows it.
   const isWaiting = (resumes.data || []).some((r) => r.parse_status === 'pending');
@@ -61,11 +63,13 @@ function ResumeSection({ parsedIds, reloadParsed }) {
   async function analyze(resumeId) {
     setError(null);
     setTimedOut(false);
+    setAnalyzingId(resumeId);
     try {
       await apiClient.post(`/api/documents/resumes/${resumeId}/parse/`, {});
     } catch (err) {
       setError(errorText(err, 'Could not start analysis.'));
     } finally {
+      setAnalyzingId(null);
       reloadResumes();
     }
   }
@@ -104,6 +108,7 @@ function ResumeSection({ parsedIds, reloadParsed }) {
             <button
               type="button"
               onClick={() => analyze(resume.id)}
+              disabled={analyzingId === resume.id}
               className={secondaryButtonClass}
             >
               Retry
@@ -138,6 +143,7 @@ function ResumeSection({ parsedIds, reloadParsed }) {
                 <button
                   type="button"
                   onClick={() => analyze(resume.id)}
+                  disabled={analyzingId === resume.id}
                   className={secondaryButtonClass}
                 >
                   Analyze

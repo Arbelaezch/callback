@@ -17,6 +17,7 @@ from rest_framework_simplejwt.state import token_backend
 from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken
 from django.conf import settings
 
+from callback.throttles import IPScopedRateThrottle, ReadableThrottleMixin
 from .serializers import (
     RegisterSerializer,
     UserSerializer,
@@ -74,8 +75,10 @@ def _recently_rotated(raw_token):
     ).exists()
 
 
-class RegisterView(APIView):
+class RegisterView(ReadableThrottleMixin, APIView):
     permission_classes = [AllowAny]
+    throttle_classes = [IPScopedRateThrottle]
+    throttle_scope = 'register'
 
     def post(self, request):
         serializer = RegisterSerializer(data=request.data)
@@ -97,8 +100,10 @@ class RegisterView(APIView):
         return response
 
 
-class LoginView(APIView):
+class LoginView(ReadableThrottleMixin, APIView):
     permission_classes = [AllowAny]
+    throttle_classes = [IPScopedRateThrottle]
+    throttle_scope = 'login'
 
     def post(self, request):
         # print('LOGIN DATA:', request.data)
