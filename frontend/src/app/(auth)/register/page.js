@@ -30,16 +30,13 @@ export default function RegisterPage() {
     e.preventDefault();
     setError(null);
     setLoading(true);
-    // console.debug('[RegisterForm] submit username=%s', form.username);
 
     try {
       await register(form);
       justRegistered.current = true;
       await refresh();
-    //   console.debug('[RegisterForm] success, redirecting to /onboarding');
       router.push('/profile');
     } catch (err) {
-      console.warn('[RegisterForm] error', err);
       const fieldError = ['username', 'email', 'password']
         .map((f) => err[f]?.[0])
         .find(Boolean);

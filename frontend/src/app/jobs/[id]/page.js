@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { apiClient } from '@/lib/apiClient';
 import { useApiResource } from '@/hooks/useApiResource';
@@ -45,7 +46,9 @@ export default function JobPage() {
   }, [isPending, timedOut, reloadJob]);
 
   async function regenerate() {
-    const resumeId = parsed.data?.[0]?.resume;
+    const sourceResume = latestOfKind(documents, 'resume')?.resume;
+    const parsedIds = (parsed.data || []).map((p) => p.resume);
+    const resumeId = parsedIds.includes(sourceResume) ? sourceResume : parsedIds[0];
     if (!resumeId) return setError('Analyze a resume on your profile first.');
     if (
       documents.some((d) => d.edited) &&
@@ -72,8 +75,11 @@ export default function JobPage() {
   }
   if (job.error && !job.data) {
     return (
-      <main className="px-4 py-12 text-sm text-destructive">
-        {job.error.detail || 'Could not load this job.'}
+      <main className="space-y-3 px-4 py-12 text-sm">
+        <Link href="/jobs" className="text-muted-foreground hover:text-foreground">
+          ← All jobs
+        </Link>
+        <p className="text-destructive">{job.error.detail || 'Could not load this job.'}</p>
       </main>
     );
   }
@@ -83,6 +89,9 @@ export default function JobPage() {
       <div className="mx-auto max-w-400 space-y-6">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
+            <Link href="/jobs" className="text-sm text-muted-foreground hover:text-foreground">
+              ← All jobs
+            </Link>
             <h1 className="text-2xl font-semibold tracking-tight">{job.data.title}</h1>
             <p className="text-sm text-muted-foreground">{job.data.company}</p>
           </div>
@@ -97,6 +106,9 @@ export default function JobPage() {
         </div>
 
         {error && <p className="text-sm text-destructive">{error}</p>}
+        {job.error && job.data && (
+          <p className="text-sm text-destructive">{job.error.detail || 'Could not refresh this job.'}</p>
+        )}
 
         <div className="flex gap-2 border-b border-border">
           {TABS.map(({ kind, label }) => (

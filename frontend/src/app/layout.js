@@ -8,7 +8,7 @@ const inter = Inter({ subsets: ['latin'] });
 
 export const metadata = {
   title: 'Callback',
-  description: 'AI-powered job application agent.',
+  description: 'Tailored resumes and cover letters for each job, written in your voice.',
 };
 
 export default function RootLayout({ children }) {

@@ -11,6 +11,7 @@ import hashlib
 import json
 import logging
 
+from django.db import transaction
 from django.db.models.functions import Length
 
 from pipeline.llm import build_voice_profile, run_scout, verify_documents, write_documents
@@ -90,22 +91,31 @@ def get_voice_profile(user, sources, cover_letter_sample: str) -> dict:
     return voice
 
 
-def generate_documents(job_posting, parsed_resume, cover_letter_sample: str = '') -> tuple:
+def create_pending_documents(job_posting, resume) -> tuple:
+    """Create the pending resume and cover letter rows for a new version."""
+    with transaction.atomic():
+        version = (
+            GeneratedDocument.objects.filter(job_posting=job_posting, kind='resume').count() + 1
+        )
+        resume_doc = GeneratedDocument.objects.create(
+            job_posting=job_posting, kind='resume', status='pending',
+            version=version, resume=resume,
+        )
+        letter_doc = GeneratedDocument.objects.create(
+            job_posting=job_posting, kind='cover_letter', status='pending',
+            version=version, resume=resume,
+        )
+    return resume_doc, letter_doc
+
+
+def generate_documents(resume_doc, letter_doc, parsed_resume, cover_letter_sample: str = '') -> tuple:
     """
-    Run all stages and store the results as two GeneratedDocuments.
+    Run all stages and fill the two pending GeneratedDocuments.
     Returns (resume_doc, cover_letter_doc). If any stage fails, both documents
     are marked failed with the error and the exception is re-raised.
     """
+    job_posting = resume_doc.job_posting
     user = job_posting.user
-    next_version = (
-        GeneratedDocument.objects.filter(job_posting=job_posting, kind='resume').count() + 1
-    )
-    resume_doc = GeneratedDocument.objects.create(
-        job_posting=job_posting, kind='resume', version=next_version,
-    )
-    letter_doc = GeneratedDocument.objects.create(
-        job_posting=job_posting, kind='cover_letter', version=next_version,
-    )
 
     try:
         job = {
@@ -138,14 +148,16 @@ def generate_documents(job_posting, parsed_resume, cover_letter_sample: str = ''
     resume_doc.layout = parsed_resume.layout
     resume_doc.unsupported_claims = [c for c in claims if c['document'] == 'resume']
     resume_doc.status = 'ready'
-    resume_doc.save(update_fields=['content', 'layout', 'unsupported_claims', 'status'])
+    resume_doc.error = ''
+    resume_doc.save(update_fields=['content', 'layout', 'unsupported_claims', 'status', 'error'])
 
     letter_doc.content = {'header': parsed_resume.content.get('header', {})}
     letter_doc.layout = parsed_resume.layout
     letter_doc.markdown = written['cover_letter_markdown']
     letter_doc.unsupported_claims = [c for c in claims if c['document'] == 'cover_letter']
     letter_doc.status = 'ready'
-    letter_doc.save(update_fields=['content', 'layout', 'markdown', 'unsupported_claims', 'status'])
+    letter_doc.error = ''
+    letter_doc.save(update_fields=['content', 'layout', 'markdown', 'unsupported_claims', 'status', 'error'])
 
     logger.info('Generated documents for job posting %s (%d flagged claims)', job_posting.pk, len(claims))
     return resume_doc, letter_doc

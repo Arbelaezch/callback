@@ -6,10 +6,17 @@ import Link from 'next/link';
 import { login } from '@/lib/auth';
 import { useAuth } from '@/contexts/AuthContext';
 
+// Only same-site paths are allowed, so ?next= cannot send users off-site.
+function safeNextPath(value) {
+  // URL parsers strip tabs and newlines, so "/\t/evil.com" would become "//evil.com".
+  const safe = typeof value === 'string' && /^\/(?![/\\])/.test(value) && !/[\u0000-\u001F\u007F]/.test(value);
+  return safe ? value : '/jobs';
+}
+
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const next = searchParams.get('next') || '/jobs';
+  const next = safeNextPath(searchParams.get('next'));
 
   const { user, loading: loadingUser, refresh } = useAuth();
   const [form, setForm] = useState({ username: '', password: '' });
@@ -30,15 +37,12 @@ function LoginForm() {
     e.preventDefault();
     setError(null);
     setLoading(true);
-    // console.debug('[LoginForm] submit username=%s', form.username);
 
     try {
       await login({ username: form.username, password: form.password });
       await refresh();
-    //   console.debug('[LoginForm] success, redirecting to %s', next);
       router.push(next);
     } catch (err) {
-      console.warn('[LoginForm] error', err);
       setError(err.detail || 'Login failed.');
     } finally {
       setLoading(false);

@@ -18,6 +18,7 @@ export default function NewJobPage() {
   const [description, setDescription] = useState('');
   const [resumeId, setResumeId] = useState('');
   const [error, setError] = useState(null);
+  const [jobId, setJobId] = useState(null);
   const [submitting, setSubmitting] = useState(false);
 
   const parsedIds = new Set((parsed.data || []).map((p) => p.resume));
@@ -33,9 +34,14 @@ export default function NewJobPage() {
     }
     setSubmitting(true);
     try {
-      const job = await apiClient.post('/api/documents/jobs/', { title, company, description });
-      await apiClient.post(`/api/documents/jobs/${job.id}/generate/`, { resume_id: Number(selected) });
-      router.push(`/jobs/${job.id}`);
+      let id = jobId;
+      if (id === null) {
+        const job = await apiClient.post('/api/documents/jobs/', { title, company, description });
+        id = job.id;
+        setJobId(id);
+      }
+      await apiClient.post(`/api/documents/jobs/${id}/generate/`, { resume_id: Number(selected) });
+      router.push(`/jobs/${id}`);
     } catch (err) {
       setError(err?.detail || 'Something went wrong. Please try again.');
       setSubmitting(false);
@@ -70,10 +76,10 @@ export default function NewJobPage() {
 
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Job title">
-            <input value={title} onChange={(e) => setTitle(e.target.value)} className={inputClass} />
+            <input value={title} onChange={(e) => setTitle(e.target.value)} disabled={jobId !== null} className={inputClass} />
           </Field>
           <Field label="Company">
-            <input value={company} onChange={(e) => setCompany(e.target.value)} className={inputClass} />
+            <input value={company} onChange={(e) => setCompany(e.target.value)} disabled={jobId !== null} className={inputClass} />
           </Field>
         </div>
 
@@ -82,6 +88,7 @@ export default function NewJobPage() {
             rows={14}
             value={description}
             onChange={(e) => setDescription(e.target.value)}
+            disabled={jobId !== null}
             className={textareaClass}
           />
         </Field>
@@ -96,6 +103,10 @@ export default function NewJobPage() {
               ))}
             </select>
           </Field>
+        )}
+
+        {jobId !== null && (
+          <p className="text-sm text-muted-foreground">Your job is saved. Retry to start generation.</p>
         )}
 
         {error && <p className="text-sm text-destructive">{error}</p>}

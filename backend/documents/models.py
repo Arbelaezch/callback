@@ -127,6 +127,11 @@ class GeneratedDocument(models.Model):
     ]
 
     job_posting = models.ForeignKey(JobPosting, on_delete=models.CASCADE, related_name='documents')
+    resume = models.ForeignKey(
+        'users.Resume', null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='generated_documents',
+        help_text='The resume this version was generated from.',
+    )
     kind = models.CharField(max_length=15, choices=KIND_CHOICES)
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='pending')
     content = models.JSONField(default=dict, blank=True)

@@ -38,6 +38,7 @@ VOICE_SAMPLE_MAX_CHARS = 6000
 # Context sources: sections longer than this are split on paragraph breaks.
 CONTEXT_SECTION_MAX_CHARS = 2000
 CONTEXT_UPLOAD_MAX_BYTES = 1024 * 1024
+RESUME_UPLOAD_MAX_BYTES = 5 * 1024 * 1024
 CONTEXT_UPLOAD_EXTENSIONS = ('.md', '.txt')
 
 # Jobs below this score are filtered out before the apply stage.

@@ -5,12 +5,23 @@ from django.utils import timezone
 
 from pipeline.llm import analyze_resume
 from pipeline.storage import read_file
+from users.models import Resume
 
 from .models import ParsedResume, SourceDocumentSection
 from .search import index_sections
 from .sectioning import split_sections
 
 logger = logging.getLogger(__name__)
+
+
+def _set_parse_status(resume, parse_status, parse_error):
+    # A queryset update, not resume.save(): the instance may be stale, and
+    # Resume.save would clear a default the user chose in the meantime.
+    resume.parse_status = parse_status
+    resume.parse_error = parse_error
+    Resume.objects.filter(pk=resume.pk).update(
+        parse_status=parse_status, parse_error=parse_error, updated_at=timezone.now(),
+    )
 
 
 def parse_resume(resume) -> ParsedResume:
@@ -35,13 +46,9 @@ def parse_resume(resume) -> ParsedResume:
                 'layout': result['layout'],
             },
         )
-        resume.parse_status = 'ready'
-        resume.parse_error = ''
-        resume.save(update_fields=['parse_status', 'parse_error'])
+        _set_parse_status(resume, 'ready', '')
     except Exception as exc:
-        resume.parse_status = 'failed'
-        resume.parse_error = str(exc) or exc.__class__.__name__
-        resume.save(update_fields=['parse_status', 'parse_error'])
+        _set_parse_status(resume, 'failed', str(exc) or exc.__class__.__name__)
         raise
     logger.info('Parsed resume %s for user %s', resume.pk, resume.user_id)
     return parsed

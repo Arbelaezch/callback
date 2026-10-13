@@ -184,7 +184,7 @@ Reads an uploaded `.md`/`.txt` (max 1 MB), splits it by heading into `SourceDocu
 
 The voice profile is built by `build_voice_profile` from the cover letter sample plus the longest source sections.
 
-If a stage raises, both documents are marked `failed` with the error and the exception is re-raised. If the worker process itself dies the rows stay `pending` (known gap: failure handling for parse and generation is not complete).
+If a stage raises, both documents are marked `failed` with the error and the exception is re-raised. If the worker process itself dies the rows stay `pending` until `fail_stale_documents` marks them failed.
 
 **Rendering** (`documents/rendering.py`). HTML is rendered with Django templates and converted to PDF with WeasyPrint. The preview endpoint serves the same HTML.
 - The layout comes from the model, so every value is validated before it reaches CSS (`resolve_layout`): numbers clamped, enums checked, colours matched against `#rrggbb`, fonts mapped to a fixed stack (Liberation fonts in Docker). Never emit raw model text into CSS.
@@ -214,7 +214,7 @@ When adding or changing a prompt, run the live smoke path at least once (see "Te
 
 JWT via `djangorestframework-simplejwt`. Tokens in httpOnly cookies, never localStorage.
 
-- `access_token` cookie: 15 min. `refresh_token` cookie: 7 days, rotated on refresh, blacklisted on logout.
+- `access_token` cookie: 15 min. `refresh_token` cookie: 7 days, blacklisted on logout (not rotated on refresh yet). A failed refresh and logout both clear the auth cookies.
 - `CookieJWTAuthentication` in `users/authentication.py` reads the cookie, falls back to the Authorization header.
 - All endpoints require `IsAuthenticated` unless explicitly `AllowAny`. Every `documents` view scopes its querysets to `request.user`.
 - `secure=not DEBUG` on cookies.
@@ -257,8 +257,8 @@ JWT via `djangorestframework-simplejwt`. Tokens in httpOnly cookies, never local
 | DELETE | `/sources/<id>/` | Remove a source and its file |
 | GET, POST | `/jobs/` | List job postings (with documents); create one |
 | GET | `/jobs/<id>/` | One posting with its documents |
-| POST | `/jobs/<id>/generate/` | `{resume_id}`: queue generation (202). Resume must be parsed |
-| GET, PATCH | `/documents/<id>/` | Read a document; save the user's edits (sets `edited`) |
+| POST | `/jobs/<id>/generate/` | `{resume_id}`: create the pending rows, queue generation (202). Resume must be parsed; 503 if queueing fails (rows marked failed) |
+| GET, PATCH | `/documents/<id>/` | Read a document (includes read-only `resume`); save the user's edits (sets `edited`). PATCH: 409 unless `ready`, 400 `{content: [...]}` on malformed content |
 | GET | `/documents/<id>/preview/` | The document as HTML |
 | GET | `/documents/<id>/export/` | PDF download; `X-Page-Count` header |
 
@@ -317,7 +317,8 @@ LLM models and limits (`LLM_MODEL_SCOUT/WRITER/VERIFIER`, `LLM_MAX_TOKENS_*`, `L
 - `index_sections(source_id)`.
 
 ### `documents/generation.py`
-- `generate_documents(job_posting, parsed_resume, cover_letter_sample='') -> (resume_doc, cover_letter_doc)`.
+- `create_pending_documents(job_posting, resume) -> (resume_doc, cover_letter_doc)`: new pending rows for the next version.
+- `generate_documents(resume_doc, letter_doc, parsed_resume, cover_letter_sample='') -> (resume_doc, letter_doc)`: fills the given rows; the task skips rows that are no longer `pending`.
 - `get_voice_profile(user, sources, sample)`: cached by hash.
 
 ### `documents/rendering.py`
