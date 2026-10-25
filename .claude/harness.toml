@@ -3,7 +3,7 @@
 
 [project]
 name = "Callback"
-description = "Writes a tailored resume and cover letter for one pasted job description, in the user's voice, using a scout/writer/verifier chain of Claude agents. Next.js frontend, Django + DRF backend with Celery/Redis, WeasyPrint PDF export. The older auto-apply pipeline (JSearch scan, scoring, AWS Lambda Browser Use) is parked."
+description = "Writes a tailored resume and cover letter for one pasted job description, in the user's voice, using a scout/writer/verifier chain of Claude agents. Next.js frontend, Django + DRF backend with Celery/Redis, WeasyPrint PDF export."
 # Extra things the reviewers should check in this codebase:
 review_focus = [
   "every DRF view has an explicit permission class (IsAuthenticated unless AllowAny is intended) and scopes querysets to request.user, including every documents view and the scout's search and read tools",
@@ -16,7 +16,7 @@ review_focus = [
   "frontend calls the API only via apiClient.js, loads data with useApiResource, sets state only inside promise callbacks in effects, uses Tailwind (no inline styles), no TypeScript",
   "no secrets, hardcoded URLs, console.log, or CELERY_BEAT_SCHEDULE added",
   "no personal files committed (docs/ holds real resumes and is gitignored)",
-  "parked code (jobs app, pipeline/tasks, lambda/, /dashboard, /onboarding) is untouched unless the task says otherwise; flag unrelated edits to it",
+  "the change stays within V1 scope (pasted job description in, tailored resume and cover letter out); flag V2 or V3 features (job discovery, approval inbox, auto-apply); V2/V3 groundwork code (jobs app, pipeline/tasks, lambda/, /dashboard, /onboarding) is untouched unless the task says otherwise",
 ]
 
 [accounts]

@@ -5,9 +5,14 @@
 ## Project
 Callback: given a user's resume, a cover letter sample, optional supporting documents (projects, notes) and a pasted job description, the AI writes a resume and cover letter tailored to that job, in the user's own voice. The user edits both in the app and exports PDFs.
 
-Monorepo: Next.js frontend + Django backend (Celery workers) + an AWS Lambda browser-automation function.
+Monorepo: Next.js frontend + Django backend (Celery workers) + an AWS Lambda browser-automation function (V3 groundwork).
 
-**Product direction.** The original product (daily scan, score, auto-apply via browser agent) is **parked, not deleted**. Its code still exists (`pipeline/tasks/*`, `jobs` app, `lambda/`, `/dashboard`, `/onboarding`) but nothing in the new flow uses it. Do not extend it unless asked. The Lambda browser agent returns later as an "apply for me" step once document generation is solid.
+**Product direction (three versions, built in order).**
+1. **V1 (MVP, current):** the user pastes a job description and gets a tailored resume and cover letter built from their context documents. No job discovery, no applying. Everything below "Document generation" describes V1.
+2. **V2:** scan for jobs matching the user's saved search requirements and push matches to them. The user approves each job before the AI generates its resume and cover letter; generation must never run on unapproved jobs (each generation costs money). Expect new pieces: saved search requirements, a discovery task, a match inbox with approve/dismiss, and a notification channel. Generation reuses the V1 pipeline unchanged, fed by a discovered job instead of a pasted one (`JobPosting` is the shared entry point).
+3. **V3:** the AI applies for the user using a browser agent or whatever means is available by then, for approved jobs only. Build on the V1/V2 documents and approval record; keep a human-visible log of every submission.
+
+Do not build V2 or V3 features while working on V1. Existing code that is groundwork for them is described under "V2/V3 groundwork" below: keep it, and do not extend it unless the task is about V2 or V3.
 
 ---
 
@@ -24,8 +29,8 @@ Monorepo: Next.js frontend + Django backend (Celery workers) + an AWS Lambda bro
 | PDF export | WeasyPrint 70 (needs Pango and fonts: installed in `backend/Dockerfile`) |
 | Retrieval | Postgres full-text search (no embeddings) |
 | File storage | AWS S3 (dev stub: `/tmp`) |
-| Browser automation (parked) | AWS Lambda + Browser Use, Docker image in ECR |
-| Job discovery (parked) | JSearch API (RapidAPI) |
+| Job discovery (V2 groundwork) | JSearch API (RapidAPI) |
+| Browser automation (V3 groundwork) | AWS Lambda + Browser Use, Docker image in ECR |
 | Email | Django SMTP (not implemented) |
 | Error tracking | Sentry (installed, not initialised) |
 | Reverse proxy | Nginx (host) |
@@ -36,7 +41,7 @@ Monorepo: Next.js frontend + Django backend (Celery workers) + an AWS Lambda bro
 
 ## Infrastructure
 
-Self-hosted on a Dell OptiPlex 7040. Browser Use jobs are isolated to AWS Lambda and never touch the home server.
+Self-hosted on a Dell OptiPlex 7040. Browser Use runs in AWS Lambda and never touches the home server.
 
 ```
 Host (OptiPlex)
@@ -44,15 +49,14 @@ Host (OptiPlex)
 ├── callback/docker-compose.yml
 │   ├── backend (gunicorn in prod, runserver in dev)
 │   ├── celery worker
-│   ├── celery-beat (django-celery-beat DB scheduler; only used by the parked pipeline)
+│   ├── celery-beat (django-celery-beat DB scheduler; V2 groundwork)
 │   ├── frontend (next dev; prod runs `node server.js` from the standalone build)
 │   ├── redis
 │   └── postgres
-└── portfolio/docker-compose.yml (separate project)
 
 AWS
 ├── S3: resumes/, context/ (supporting documents)
-└── Lambda: callback-submit-application (parked)
+└── Lambda: callback-submit-application (V3 groundwork)
 ```
 
 ---
@@ -70,8 +74,8 @@ AWS
       /jobs              # list of job postings
       /jobs/new          # paste a job description, start generation
       /jobs/[id]         # tabs: Resume | Cover letter; editor + live preview + PDF download
-      /dashboard         # PARKED: old pipeline controls (has lint errors and console calls)
-      /onboarding        # PARKED: old onboarding (requires job-search preferences)
+      /dashboard         # V2 groundwork: search controls and run logs
+      /onboarding        # V2 groundwork: job-search preferences
       layout.js, globals.css, page.js (redirects to /jobs)
     /components
       /layout/Navbar.js
@@ -82,7 +86,7 @@ AWS
     /contexts/AuthContext.js
     /hooks
       useApiResource.js                        # load + reload a JSON resource via apiClient
-      /onboarding/useChoices.js
+      /onboarding/useChoices.js                # V2 groundwork
     /lib
       apiClient.js       # all API calls go through here
       auth.js
@@ -90,8 +94,8 @@ AWS
 
 /backend
   /callback              # project config only: settings, urls, celery, config.py, health
-  /users                 # CustomUser, Resume, Portfolio, CoverLetterSample, auth + onboarding views
-  /documents             # NEW: the product (see "Document generation")
+  /users                 # CustomUser, Resume, CoverLetterSample, auth views
+  /documents             # the product (see "Document generation")
     models.py, serializers.py, views.py, urls.py, admin.py
     services.py          # parse_resume(), index_upload_source()
     generation.py        # generate_documents(): scout -> writer -> verifier
@@ -105,12 +109,12 @@ AWS
     /llm                 # client.py (call_structured), resume_analysis.py, scout.py, writer.py,
                          #   prompts.py, schemas.py, __init__.py
     storage.py           # S3 helpers (dev stub in /tmp)
-    /tasks               # PARKED: daily_run, scan_jobs, score_jobs, apply_job, lambda_runner
-    /jsearch, /ats       # PARKED (ats has only detect_ats; no Greenhouse/Lever clients)
-  /jobs                  # PARKED: Agent, Search, JobSeen, Application, RunLog
+    /tasks               # V2/V3 groundwork: daily_run, scan_jobs, score_jobs, apply_job, lambda_runner
+    /jsearch, /ats       # V2/V3 groundwork (ats has only detect_ats)
+  /jobs                  # V2 groundwork: Agent, Search, JobSeen, Application, RunLog
   /notifications         # placeholder
 
-/lambda                  # PARKED: Browser Use handler, Dockerfile, deploy via GitHub Actions
+/lambda                  # V3 groundwork: Browser Use handler, Dockerfile
 /.github/workflows/deploy-lambda.yml
 ```
 
@@ -122,9 +126,9 @@ AWS
 |---|---|
 | `callback` | Project config only. No models, no views. |
 | `documents` | The product: parsed resumes, context sources, generation, rendering. Models + serializers + views. |
-| `users` | Auth, custom user, Resume (uploaded file), Portfolio, CoverLetterSample. |
-| `pipeline` | LLM client and agents (`pipeline/llm`), S3 storage. Also the parked scan/score/apply tasks. No models. |
-| `jobs` | PARKED: Agent, Search, JobSeen, Application, RunLog. |
+| `users` | Auth, custom user, Resume (uploaded file), CoverLetterSample. |
+| `pipeline` | LLM client and agents (`pipeline/llm`), S3 storage. Also the V2/V3 groundwork tasks. No models. |
+| `jobs` | V2 groundwork: Agent, Search, JobSeen, Application, RunLog. |
 | `notifications` | Placeholder. |
 
 Dependency direction: `documents` imports `pipeline.llm` and `pipeline.storage`; `pipeline.llm` must **not** import Django models. The scout agent receives tool handlers from its caller for this reason.
@@ -137,7 +141,6 @@ Dependency direction: `documents` imports `pipeline.llm` and `pipeline.storage`;
 users (CustomUser)
 resumes                  -- user, label, s3_key, filename, is_default, status (pending|ready|failed|deleted)
 cover_letter_samples     -- user, label, body, is_default
-portfolios               -- user, label, body, is_default           (legacy; not used by generation)
 
 documents_parsedresume          -- user, resume (OneToOne), content JSON, layout JSON
 documents_contextsource         -- user, kind (git|obsidian|upload), label, url, s3_key,
@@ -148,8 +151,6 @@ documents_jobposting            -- user, title, company, description
 documents_generateddocument     -- job_posting, kind (resume|cover_letter), status (pending|ready|failed),
                                 --   content JSON, layout JSON, markdown, unsupported_claims JSON,
                                 --   version, edited, pdf_s3_key (unused), error
-
-agents, searches, jobs_seen, applications, run_logs   -- PARKED (jobs app)
 ```
 
 **Key design decisions**
@@ -204,9 +205,20 @@ All calls go through `pipeline/llm`. Callers never import the Anthropic SDK dire
 - Truncated output (`stop_reason == 'max_tokens'`) and refusals raise `ValueError`.
 - `run_scout` (`scout.py`) is the only agent loop. It uses `tool_choice: auto` and forces `submit_brief` only on its last step (Haiku supports that).
 - `analyze_resume`, `build_voice_profile`, `write_documents`, `verify_documents` are the other public functions. Prompts are in `prompts.py`.
-- `score_job` and `personalize_cover_letter` belong to the parked pipeline.
 
 When adding or changing a prompt, run the live smoke path at least once (see "Testing"): mocked tests cannot catch prompt or schema problems.
+
+---
+
+## V2/V3 groundwork (not part of V1)
+
+Existing code that V2 and V3 will build on. V1 does not use it. When V2 or V3 starts, expect to rework it to fit the approval-first design (nothing is generated or submitted until the user approves a job).
+
+**V2: discovery.** `Search` is a saved set of requirements (role titles, cities, location types, seniority, salary, excluded companies, `daily_target`, `job_cooldown`). `JobSeen` is the user-scoped dedup table (rows are never deleted; re-eligibility is `seen_at >= now - job_cooldown`). `Agent` is a per-user master on/off switch. `Application` holds a discovered job with its score and status; V2 would add the approve/dismiss state here or beside it. Flow: Celery beat (per scheduled `Search`, DB-backed via `django-celery-beat`) or manual trigger -> `Agent.active` and `Search.active` checks -> JSearch fetch -> dedup -> LLM score (`score_job`, threshold `LLM_SCORE_THRESHOLD`, capped by `daily_target`) -> `RunLog`. Code: `pipeline/tasks/{daily_run,scan_jobs,score_jobs}.py`, `pipeline/jsearch/`, `jobs/` (views under `/api/jobs/*`). Whether the crawler stays a Celery task or moves to Lambda is undecided.
+
+**V3: applying.** `ats/utils.detect_ats` classifies apply URLs; there are no Greenhouse or Lever clients (they need employer keys), so applications would go through the browser agent. `apply_job` dispatches to Lambda in prod (`USE_LAMBDA=True`) or runs `lambda_runner` in-process locally. Lambda `callback-submit-application` runs Browser Use against the apply URL and POSTs `{status, failure_reason}` to `/api/pipeline/applications/<id>/callback/` with the `X-Callback-Secret` header; it does not write to Postgres directly. The payload carries a presigned `resume_url`. It deploys as a Docker image to ECR through `.github/workflows/deploy-lambda.yml` on pushes to `main` that touch `lambda/**`; memory, timeout and env vars are set by hand in AWS.
+
+**Known issues, left as found:** the local import path in `apply_job` is wrong, `personalize_cover_letter` is never called, an application is marked `submitted` as soon as the async Lambda invoke returns, and `send_digest` is not written. `/dashboard` has a setState-in-effect lint error and `/onboarding` an unescaped `'`.
 
 ---
 
@@ -264,7 +276,7 @@ JWT via `djangorestframework-simplejwt`. Tokens in httpOnly cookies, never local
 
 `preview` and `export` return 409 until the document is `ready`.
 
-### Parked
+### V2/V3 groundwork
 `/api/jobs/*` (agent, searches, applications), `/api/onboarding/`, `/api/pipeline/applications/<id>/callback/` (Lambda callback, `X-Callback-Secret` header).
 
 ---
@@ -279,7 +291,8 @@ Non-secret constants live in `callback/config.py` and are imported into `setting
 
 Application code imports constants from `callback.config`, not `django.conf.settings`, unless Django itself requires the value there. Throttle rates, daily caps and in-flight windows are in `config.py`. `PARSE_INFLIGHT_MINUTES` and `GENERATION_INFLIGHT_MINUTES` must match `PARSE_POLL_TIMEOUT_MS` (profile page) and `GENERATION_POLL_TIMEOUT_MS` (job page) and stay below the `*_STALE_AFTER_MINUTES` values. `NUM_PROXIES` (env, default 0) is the number of reverse proxies in front of Django; with 0 the client IP is `REMOTE_ADDR` and `X-Forwarded-For` is ignored. The browser reaches Django only through the Next.js rewrite, so 0 means one site-wide login/register bucket; do not ship 0. Do not simply set it to the proxy count (1) either: Next keeps a client-supplied `X-Forwarded-For`, so an edge proxy must overwrite it and Django's port must not be public (tracked in issue #23). `CACHE_URL` (env, optional redis URL) shares throttle counters across workers; unset means per-process LocMem.
 
-Do not define `CELERY_BEAT_SCHEDULE` (scheduling is DB-backed via `django-celery-beat`; only the parked pipeline uses it).
+
+Do not define `CELERY_BEAT_SCHEDULE`; scheduling is DB-backed via `django-celery-beat` (V2 groundwork).
 
 ---
 
@@ -308,7 +321,7 @@ Do not define `CELERY_BEAT_SCHEDULE` (scheduling is DB-backed via `django-celery
 ## Backend module interfaces
 
 ### `callback/config.py`
-LLM models and limits (`LLM_MODEL_SCOUT/WRITER/VERIFIER`, `LLM_MAX_TOKENS_*`, `LLM_TIMEOUT_SECONDS(_LONG)`), `SCOUT_MAX_STEPS`, `SCOUT_TOOL_RESULT_MAX_CHARS`, `VOICE_SAMPLE_MAX_CHARS`, `CONTEXT_SECTION_MAX_CHARS`, `CONTEXT_UPLOAD_MAX_BYTES`, `CONTEXT_UPLOAD_EXTENSIONS`, plus parked JSearch and scoring constants.
+LLM models and limits (`LLM_MODEL_SCOUT/WRITER/VERIFIER`, `LLM_MAX_TOKENS_*`, `LLM_TIMEOUT_SECONDS(_LONG)`), `SCOUT_MAX_STEPS`, `SCOUT_TOOL_RESULT_MAX_CHARS`, `VOICE_SAMPLE_MAX_CHARS`, `CONTEXT_SECTION_MAX_CHARS`, `CONTEXT_UPLOAD_MAX_BYTES`, `CONTEXT_UPLOAD_EXTENSIONS`, plus JSearch and scoring constants (V2 groundwork).
 
 ### `documents/services.py`
 - `parse_resume(resume) -> ParsedResume`: requires `resume.status == 'ready'`; re-running replaces the parse.
@@ -331,14 +344,6 @@ LLM models and limits (`LLM_MODEL_SCOUT/WRITER/VERIFIER`, `LLM_MAX_TOKENS_*`, `L
 
 ---
 
-## Parked pipeline (reference only)
-
-Daily loop: Celery beat (per scheduled `Search`) or manual trigger -> `Agent.active` and `Search.active` checks -> JSearch fetch -> dedup against `JobSeen` (user-scoped, `Search.job_cooldown`) -> LLM score (threshold `LLM_SCORE_THRESHOLD`, cap `Search.daily_target`) -> `apply_job` -> `RunLog`.
-
-- There are **no Greenhouse or Lever API clients**; they need employer keys. `ats/utils.detect_ats` only classifies URLs, and every application goes through the browser agent.
-- `apply_job` dispatches to Lambda in prod (`USE_LAMBDA=True`) or runs `lambda_runner` in-process locally. Known issues: the local import path is wrong, cover letter personalisation is never called, and an application is marked `submitted` as soon as the async invoke returns.
-- Lambda `callback-submit-application` runs Browser Use against the apply URL and POSTs `{status, failure_reason}` to `/api/pipeline/applications/<id>/callback/` with `X-Callback-Secret`. It does not write to Postgres directly. The payload carries a presigned `resume_url`. It deploys as a Docker image to ECR through `.github/workflows/deploy-lambda.yml` on pushes to `main` that touch `lambda/**`. Function memory, timeout and env vars are set by hand in AWS.
-
 ---
 
 ## Testing
@@ -357,9 +362,9 @@ Frontend: `cd frontend && npm run lint && npm run build`. For the browser flow, 
 
 - `docker compose up` runs everything. To run pieces on the host instead, point `CELERY_BROKER_URL` at `localhost`.
 - **macOS:** Celery's default prefork pool segfaults after forking; run the worker with `--pool=solo`.
+- `USE_LAMBDA=False` runs the browser agent in-process (V3 groundwork).
 - A Redis already running on the host shadows Docker's published `6379` for `localhost` (and has no password).
 - `.env` ships with `USE_S3=True`. Override to `False` for local runs so nothing is written to S3.
-- `USE_LAMBDA=False` runs the browser agent in-process (parked path).
 
 ---
 
