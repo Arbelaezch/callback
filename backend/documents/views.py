@@ -41,7 +41,7 @@ from .serializers import (
     ParsedResumeSummarySerializer,
 )
 from .services import index_upload_source
-from .staleness import fail_stale_documents, fail_stale_parses
+from .staleness import fail_stale_documents, fail_stale_parses, fail_stale_sources
 from .tasks import generate_documents_task, parse_resume_task
 from .validation import validate_document_content
 
@@ -129,6 +129,7 @@ class ContextSourceListView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        fail_stale_sources(request.user)
         sources = ContextSource.objects.filter(user=request.user)
         return Response(ContextSourceSerializer(sources, many=True).data)
 

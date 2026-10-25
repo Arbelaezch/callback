@@ -2,9 +2,9 @@ from datetime import timedelta
 
 from django.utils import timezone
 
-from documents.models import GeneratedDocument, JobPosting
+from documents.models import ContextSource, GeneratedDocument, JobPosting
 from users.models import Resume
-from documents.staleness import STALE_GENERATION_ERROR, STALE_PARSE_ERROR
+from documents.staleness import STALE_GENERATION_ERROR, STALE_PARSE_ERROR, STALE_SOURCE_ERROR
 
 from .test_api import ApiTestCase
 
@@ -100,3 +100,40 @@ class StaleDocumentTests(ApiTestCase):
         job = self._job(30, user=self.other)
         self.client.get('/api/documents/jobs/')
         self.assertEqual(self._statuses(job), {'pending'})
+
+
+class StaleSourceTests(ApiTestCase):
+    def _source(self, minutes_ago, user=None, status='pending'):
+        source = ContextSource.objects.create(
+            user=user or self.user, kind='upload', s3_key='k', status=status)
+        ContextSource.objects.filter(pk=source.pk).update(
+            created_at=timezone.now() - timedelta(minutes=minutes_ago))
+        return source
+
+    def test_stale_pending_source_is_failed_on_list(self):
+        source = self._source(3)
+        response = self.client.get('/api/documents/sources/')
+        source.refresh_from_db()
+        self.assertEqual(source.status, 'failed')
+        self.assertEqual(source.error, STALE_SOURCE_ERROR)
+        self.assertEqual(response.data[0]['status'], 'failed')
+        self.assertEqual(response.data[0]['error'], STALE_SOURCE_ERROR)
+
+    def test_recent_pending_source_is_untouched(self):
+        source = self._source(1)
+        self.client.get('/api/documents/sources/')
+        source.refresh_from_db()
+        self.assertEqual(source.status, 'pending')
+
+    def test_other_users_stale_source_is_untouched(self):
+        source = self._source(3, user=self.other)
+        self.client.get('/api/documents/sources/')
+        source.refresh_from_db()
+        self.assertEqual(source.status, 'pending')
+
+    def test_ready_source_is_untouched(self):
+        source = self._source(30, status='ready')
+        self.client.get('/api/documents/sources/')
+        source.refresh_from_db()
+        self.assertEqual(source.status, 'ready')
+        self.assertEqual(source.error, '')
