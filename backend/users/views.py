@@ -1,3 +1,4 @@
+import logging
 from datetime import timedelta
 
 from django.contrib.auth import get_user_model
@@ -26,11 +27,18 @@ from .serializers import (
 )
 from .models import CoverLetterSample, Portfolio, Resume
 from jobs.models import Agent, Search
-from callback.config import REFRESH_ROTATION_GRACE_SECONDS, RESUME_UPLOAD_MAX_BYTES
-from pipeline.storage import upload_resume
+from callback.config import (
+    CONTEXT_UPLOAD_MAX_BYTES,
+    REFRESH_ROTATION_GRACE_SECONDS,
+    RESUME_UPLOAD_MAX_BYTES,
+)
+from pipeline.storage import delete_resume, upload_resume
 from documents.staleness import fail_stale_parses
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
+
+PRIMARY_DELETE_ERROR = 'This is your primary resume. Make another resume primary before deleting it.'
 
 
 def set_auth_cookies(response, access_token, refresh_token):
@@ -291,7 +299,10 @@ class ResumeUploadView(APIView):
         if not file.name.lower().endswith('.pdf'):
             return Response({'detail': 'Resume must be a PDF.'}, status=status.HTTP_400_BAD_REQUEST)
         if file.size > RESUME_UPLOAD_MAX_BYTES:
-            return Response({'detail': 'Resume must be under 5MB.'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {'detail': f'Resume must be under {RESUME_UPLOAD_MAX_BYTES // (1024 * 1024)}MB.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         header = file.read(5)
         file.seek(0)
         if header != b'%PDF-':
@@ -304,7 +315,7 @@ class ResumeUploadView(APIView):
             s3_key='',
             filename=file.name,
             label=label,
-            is_default=not Resume.objects.filter(user=request.user).exists(),
+            is_default=False,
             status='pending',
         )
 
@@ -312,10 +323,73 @@ class ResumeUploadView(APIView):
             s3_key = upload_resume(file, request.user.id)
             resume.s3_key = s3_key
             resume.status = 'ready'
-            resume.save(update_fields=['s3_key', 'status'])
+            # Only a ready resume can be primary; become primary unless the user
+            # already has a usable one. save() clears any other default.
+            resume.is_default = not Resume.objects.filter(
+                user=request.user, is_default=True, status='ready',
+            ).exclude(pk=resume.pk).exists()
+            resume.save(update_fields=['s3_key', 'status', 'is_default'])
         except Exception:
             resume.status = 'failed'
             resume.save(update_fields=['status'])
             return Response({'detail': 'Upload failed. Please try again.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         return Response(ResumeSerializer(resume).data, status=status.HTTP_201_CREATED)
+
+
+def _user_resume(request, resume_id):
+    return Resume.objects.filter(pk=resume_id, user=request.user).first()
+
+
+class ResumeDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, resume_id):
+        """Delete a resume and its stored file. The ready primary is protected."""
+        resume = _user_resume(request, resume_id)
+        if resume is None:
+            return Response({'detail': 'Resume not found.'}, status=status.HTTP_404_NOT_FOUND)
+        # A non-ready default only exists in legacy data and stays deletable.
+        if resume.is_default and resume.status == 'ready':
+            return Response({'detail': PRIMARY_DELETE_ERROR}, status=status.HTTP_409_CONFLICT)
+        if resume.s3_key:
+            try:
+                delete_resume(resume.s3_key)
+            except Exception:
+                logger.exception('Resume file delete failed for resume %s', resume.pk)
+                return Response(
+                    {'detail': 'Could not delete the file. Please try again.'},
+                    status=status.HTTP_502_BAD_GATEWAY,
+                )
+        resume.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class ResumePrimaryView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, resume_id):
+        """Make this resume the user's primary (default) resume."""
+        resume = _user_resume(request, resume_id)
+        if resume is None:
+            return Response({'detail': 'Resume not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if resume.status != 'ready':
+            return Response(
+                {'detail': 'Only an uploaded resume can be primary.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        resume.is_default = True
+        # update_fields so a concurrent parse status write is not overwritten.
+        resume.save(update_fields=['is_default'])
+        return Response(ResumeSerializer(resume).data)
+
+
+class UploadLimitsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        """Upload size limits, so the client can check files before sending."""
+        return Response({
+            'resume_max_bytes': RESUME_UPLOAD_MAX_BYTES,
+            'source_max_bytes': CONTEXT_UPLOAD_MAX_BYTES,
+        })
