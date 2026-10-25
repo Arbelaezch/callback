@@ -104,6 +104,8 @@ services:
     command: npm run dev
     volumes:
       - ./frontend:/app
+      - /app/node_modules   # keep the image's Linux deps; the bind mount would shadow them with macOS ones
+      - /app/.next
     ports:
       - "3000:3000"
     env_file:
