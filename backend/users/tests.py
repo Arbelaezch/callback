@@ -12,8 +12,14 @@ from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from callback.config import REFRESH_ROTATION_GRACE_SECONDS
+from callback.config import (
+    CONTEXT_UPLOAD_MAX_BYTES,
+    REFRESH_ROTATION_GRACE_SECONDS,
+    RESUME_UPLOAD_MAX_BYTES,
+)
+from documents.models import ParsedResume
 from users.models import Resume
+from users.views import PRIMARY_DELETE_ERROR
 
 
 class ResumeUploadTests(APITestCase):
@@ -54,6 +60,214 @@ class ResumeUploadTests(APITestCase):
         self.assertEqual(response.status_code, 400)
         self.assertFalse(Resume.objects.exists())
 
+
+    def test_first_successful_upload_is_default(self):
+        with patch('users.views.upload_resume', return_value='resumes/user_1/a.pdf'):
+            response = self._post('a.pdf', b'%PDF-1.4 body')
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(response.data['is_default'])
+        self.assertTrue(Resume.objects.get().is_default)
+
+    def test_failed_upload_is_not_default(self):
+        with patch('users.views.upload_resume', side_effect=Exception('boom')):
+            response = self._post('a.pdf', b'%PDF-1.4 body')
+        self.assertEqual(response.status_code, 500)
+        resume = Resume.objects.get()
+        self.assertEqual(resume.status, 'failed')
+        self.assertFalse(resume.is_default)
+
+    def test_upload_becomes_default_when_current_default_failed(self):
+        old = Resume.objects.create(
+            user=self.user, s3_key='', filename='old.pdf', status='failed', is_default=True,
+        )
+        with patch('users.views.upload_resume', return_value='resumes/user_1/b.pdf'):
+            response = self._post('b.pdf', b'%PDF-1.4 body')
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(Resume.objects.get(pk=response.data['id']).is_default)
+        old.refresh_from_db()
+        self.assertFalse(old.is_default)
+
+    def test_upload_does_not_steal_ready_default(self):
+        current = Resume.objects.create(
+            user=self.user, s3_key='k', filename='cur.pdf', status='ready', is_default=True,
+        )
+        with patch('users.views.upload_resume', return_value='resumes/user_1/c.pdf'):
+            response = self._post('c.pdf', b'%PDF-1.4 body')
+        self.assertEqual(response.status_code, 201)
+        self.assertFalse(response.data['is_default'])
+        current.refresh_from_db()
+        self.assertTrue(current.is_default)
+
+    def test_oversize_message_uses_limit(self):
+        with patch('users.views.RESUME_UPLOAD_MAX_BYTES', 1024 * 1024), \
+                patch('users.views.upload_resume') as upload:
+            response = self._post('big.pdf', b'%PDF-' + b'0' * (2 * 1024 * 1024))
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data['detail'], 'Resume must be under 1MB.')
+        self.assertFalse(Resume.objects.exists())
+        upload.assert_not_called()
+
+
+class ResumeDetailTests(APITestCase):
+    def setUp(self):
+        cache.clear()
+        self.user = get_user_model().objects.create_user('ada', password='x')
+        self.bob = get_user_model().objects.create_user('bob', password='x')
+        self.client.force_authenticate(self.user)
+
+    def _resume(self, user=None, status='ready', s3_key='k', is_default=False, **kw):
+        return Resume.objects.create(
+            user=user or self.user,
+            s3_key=s3_key,
+            filename=kw.pop('filename', 'r.pdf'),
+            status=status,
+            is_default=is_default,
+            **kw,
+        )
+
+    def _parsed(self, resume):
+        return ParsedResume.objects.create(resume=resume, user=resume.user, content={}, layout={})
+
+    def _delete(self, resume):
+        return self.client.delete(f'/api/users/resumes/{resume.pk}/')
+
+    def _primary(self, resume):
+        return self.client.post(f'/api/users/resumes/{resume.pk}/primary/')
+
+    def test_delete_removes_row_storage_object_and_parsed_resume(self):
+        resume = self._resume()
+        self._parsed(resume)
+        with patch('users.views.delete_resume') as delete:
+            response = self._delete(resume)
+        self.assertEqual(response.status_code, 204)
+        delete.assert_called_once_with('k')
+        self.assertFalse(Resume.objects.filter(pk=resume.pk).exists())
+        self.assertFalse(ParsedResume.objects.filter(resume_id=resume.pk).exists())
+
+    def test_delete_pending_and_failed_resumes_skips_storage(self):
+        for row_status in ('pending', 'failed'):
+            resume = self._resume(status=row_status, s3_key='')
+            with patch('users.views.delete_resume') as delete:
+                response = self._delete(resume)
+            self.assertEqual(response.status_code, 204, row_status)
+            delete.assert_not_called()
+            self.assertFalse(Resume.objects.filter(pk=resume.pk).exists())
+
+    def test_cannot_delete_another_users_resume(self):
+        resume = self._resume(user=self.bob)
+        with patch('users.views.delete_resume') as delete:
+            response = self._delete(resume)
+        self.assertEqual(response.status_code, 404)
+        delete.assert_not_called()
+        self.assertTrue(Resume.objects.filter(pk=resume.pk).exists())
+
+    def test_cannot_delete_another_users_primary(self):
+        resume = self._resume(user=self.bob, is_default=True)
+        with patch('users.views.delete_resume') as delete:
+            response = self._delete(resume)
+        self.assertEqual(response.status_code, 404)
+        delete.assert_not_called()
+
+    def test_storage_failure_keeps_row(self):
+        resume = self._resume()
+        with patch('users.views.delete_resume', side_effect=Exception('s3 down')):
+            response = self._delete(resume)
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.data['detail'], 'Could not delete the file. Please try again.')
+        self.assertTrue(Resume.objects.filter(pk=resume.pk).exists())
+
+    def test_cannot_delete_primary_resume(self):
+        primary = self._resume(is_default=True)
+        self._parsed(primary)
+        other = self._resume()
+        with patch('users.views.delete_resume') as delete:
+            response = self._delete(primary)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.data['detail'], PRIMARY_DELETE_ERROR)
+        delete.assert_not_called()
+        self.assertTrue(Resume.objects.filter(pk=primary.pk).exists())
+        self.assertTrue(ParsedResume.objects.filter(resume_id=primary.pk).exists())
+        other.refresh_from_db()
+        self.assertFalse(other.is_default)
+
+    def test_cannot_delete_only_resume_when_it_is_primary(self):
+        primary = self._resume(is_default=True)
+        with patch('users.views.delete_resume') as delete:
+            response = self._delete(primary)
+        self.assertEqual(response.status_code, 409)
+        delete.assert_not_called()
+        self.assertTrue(Resume.objects.filter(pk=primary.pk).exists())
+
+    def test_primary_can_be_deleted_after_moving_primary(self):
+        old = self._resume(is_default=True)
+        new = self._resume()
+        self.assertEqual(self._primary(new).status_code, 200)
+        with patch('users.views.delete_resume'):
+            response = self._delete(old)
+        self.assertEqual(response.status_code, 204)
+        self.assertFalse(Resume.objects.filter(pk=old.pk).exists())
+        new.refresh_from_db()
+        self.assertTrue(new.is_default)
+
+    def test_legacy_failed_default_can_be_deleted(self):
+        legacy = self._resume(status='failed', s3_key='', is_default=True)
+        other = self._resume()
+        with patch('users.views.delete_resume') as delete:
+            response = self._delete(legacy)
+        self.assertEqual(response.status_code, 204)
+        delete.assert_not_called()
+        self.assertFalse(Resume.objects.filter(pk=legacy.pk).exists())
+        self.assertFalse(Resume.objects.filter(user=self.user, is_default=True).exists())
+        other.refresh_from_db()
+        self.assertFalse(other.is_default)
+
+    def test_deleting_non_default_keeps_default(self):
+        primary = self._resume(is_default=True)
+        other = self._resume()
+        with patch('users.views.delete_resume'):
+            response = self._delete(other)
+        self.assertEqual(response.status_code, 204)
+        primary.refresh_from_db()
+        self.assertTrue(primary.is_default)
+
+    def test_set_primary_moves_default(self):
+        old = self._resume(is_default=True)
+        new = self._resume()
+        response = self._primary(new)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data['is_default'])
+        self.assertEqual(response.data['id'], new.pk)
+        old.refresh_from_db()
+        self.assertFalse(old.is_default)
+
+    def test_set_primary_rejects_non_ready(self):
+        for row_status in ('pending', 'failed'):
+            resume = self._resume(status=row_status, s3_key='')
+            response = self._primary(resume)
+            self.assertEqual(response.status_code, 400, row_status)
+            self.assertEqual(response.data['detail'], 'Only an uploaded resume can be primary.')
+            resume.refresh_from_db()
+            self.assertFalse(resume.is_default)
+
+    def test_set_primary_other_user_404(self):
+        resume = self._resume(user=self.bob)
+        response = self._primary(resume)
+        self.assertEqual(response.status_code, 404)
+        resume.refresh_from_db()
+        self.assertFalse(resume.is_default)
+
+    def test_upload_limits_returns_config_values(self):
+        response = self.client.get('/api/users/upload-limits/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data, {
+            'resume_max_bytes': RESUME_UPLOAD_MAX_BYTES,
+            'source_max_bytes': CONTEXT_UPLOAD_MAX_BYTES,
+        })
+
+    def test_upload_limits_requires_auth(self):
+        self.client.force_authenticate(None)
+        response = self.client.get('/api/users/upload-limits/')
+        self.assertEqual(response.status_code, 401)
 
 class AuthCookieTests(APITestCase):
     def setUp(self):

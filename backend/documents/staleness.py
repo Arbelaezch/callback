@@ -3,14 +3,19 @@ from datetime import timedelta
 
 from django.utils import timezone
 
-from callback.config import GENERATION_STALE_AFTER_MINUTES, PARSE_STALE_AFTER_MINUTES
+from callback.config import (
+    GENERATION_STALE_AFTER_MINUTES,
+    PARSE_STALE_AFTER_MINUTES,
+    SOURCE_STALE_AFTER_MINUTES,
+)
 from users.models import Resume
 
-from .models import GeneratedDocument
+from .models import ContextSource, GeneratedDocument
 
 logger = logging.getLogger(__name__)
 
 STALE_PARSE_ERROR = 'Analysis stopped unexpectedly. Please try again.'
+STALE_SOURCE_ERROR = 'Upload stopped unexpectedly. Please upload it again.'
 STALE_GENERATION_ERROR = 'Generation stopped unexpectedly. Please generate again.'
 
 
@@ -41,4 +46,18 @@ def fail_stale_documents(user) -> int:
     ).update(status='failed', error=STALE_GENERATION_ERROR, updated_at=now)
     if count:
         logger.warning('Failed %d stale generated document(s) for user %s', count, user.pk)
+    return count
+
+
+def fail_stale_sources(user) -> int:
+    """
+    Mark the user's uploaded supporting documents still pending past the
+    timeout as failed (the upload request died). Returns the count.
+    """
+    cutoff = timezone.now() - timedelta(minutes=SOURCE_STALE_AFTER_MINUTES)
+    count = ContextSource.objects.filter(
+        user=user, kind='upload', status='pending', created_at__lt=cutoff,
+    ).update(status='failed', error=STALE_SOURCE_ERROR)
+    if count:
+        logger.warning('Failed %d stale source(s) for user %s', count, user.pk)
     return count

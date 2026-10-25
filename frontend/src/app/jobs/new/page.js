@@ -23,7 +23,8 @@ export default function NewJobPage() {
 
   const parsedIds = new Set((parsed.data || []).map((p) => p.resume));
   const usable = (resumes.data || []).filter((r) => parsedIds.has(r.id));
-  const selected = resumeId || String(usable[0]?.id || '');
+  const primary = usable.find((r) => r.is_default);
+  const selected = resumeId || String((primary || usable[0])?.id || '');
   const ready = !parsed.loading && !resumes.loading;
 
   async function handleSubmit(e) {
@@ -94,11 +95,12 @@ export default function NewJobPage() {
         </Field>
 
         {usable.length > 1 && (
-          <Field label="Resume to start from">
+          <Field label="Resume to start from" hint="Defaults to your primary resume. Change it on your profile.">
             <select value={selected} onChange={(e) => setResumeId(e.target.value)} className={inputClass}>
               {usable.map((r) => (
                 <option key={r.id} value={r.id}>
                   {r.label || r.filename}
+                  {r.is_default ? ' (primary)' : ''}
                 </option>
               ))}
             </select>

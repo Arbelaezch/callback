@@ -84,6 +84,10 @@ CELERY_TIMEZONE = 'UTC'
 # Pending rows older than this are treated as lost, because the worker died.
 PARSE_STALE_AFTER_MINUTES = 10
 GENERATION_STALE_AFTER_MINUTES = 20
+# Uploads index synchronously, so a source still pending this long means the
+# request died. Must stay below SOURCE_POLL_TIMEOUT_MS in
+# frontend/src/app/profile/page.js (3 min).
+SOURCE_STALE_AFTER_MINUTES = 2
 
 
 # -----------------------------------------------------------------

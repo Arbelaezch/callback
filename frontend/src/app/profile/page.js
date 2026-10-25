@@ -15,9 +15,25 @@ import {
 const POLL_MS = 3000;
 // Must match PARSE_INFLIGHT_MINUTES in backend/callback/config.py, so Retry is not answered with a 409.
 const PARSE_POLL_TIMEOUT_MS = 3 * 60 * 1000;
+const UPLOAD_POLL_TIMEOUT_MS = 60 * 1000;
+// Must stay above SOURCE_STALE_AFTER_MINUTES in backend/callback/config.py
+const SOURCE_POLL_TIMEOUT_MS = 3 * 60 * 1000;
 
 function errorText(err, fallback) {
   return err?.detail || fallback;
+}
+
+function formatMb(bytes) {
+  const mb = bytes / (1024 * 1024);
+  return mb < 1 ? mb.toFixed(1) : Math.round(mb);
+}
+
+function tooLarge(file, maxBytes) {
+  return Boolean(maxBytes) && file.size > maxBytes;
+}
+
+function isPrimary(resume) {
+  return resume.is_default && resume.status === 'ready';
 }
 
 function SectionHeading({ title, description }) {
@@ -29,16 +45,35 @@ function SectionHeading({ title, description }) {
   );
 }
 
-function ResumeSection({ parsedIds, reloadParsed }) {
+function ResumeSection({ parsedIds, reloadParsed, maxBytes }) {
   const resumes = useApiResource('/api/users/resumes/');
   const [error, setError] = useState(null);
   const [uploading, setUploading] = useState(false);
-  const [timedOut, setTimedOut] = useState(false);
-  const [analyzingId, setAnalyzingId] = useState(null);
+  const [busyId, setBusyId] = useState(null);
+  // 0 means not measured yet, which counts as "not stale".
+  const [now, setNow] = useState(0);
+
+  const rows = resumes.data || [];
+  const reloadResumes = resumes.reload;
+
+  function stale(resume) {
+    if (!now) return false;
+    if (resume.parse_status === 'pending') {
+      return Boolean(
+        resume.parse_requested_at &&
+          now - Date.parse(resume.parse_requested_at) > PARSE_POLL_TIMEOUT_MS,
+      );
+    }
+    if (resume.status === 'pending') {
+      return now - Date.parse(resume.uploaded_at) > UPLOAD_POLL_TIMEOUT_MS;
+    }
+    return false;
+  }
 
   // In-progress state comes from the server, so a page refresh still shows it.
-  const isWaiting = (resumes.data || []).some((r) => r.parse_status === 'pending');
-  const reloadResumes = resumes.reload;
+  const isWaiting = rows.some(
+    (r) => (r.parse_status === 'pending' || r.status === 'pending') && !stale(r),
+  );
 
   // Reload the parsed list once more after the last pending resume clears.
   const wasWaiting = useRef(false);
@@ -48,109 +83,227 @@ function ResumeSection({ parsedIds, reloadParsed }) {
   }, [isWaiting, reloadParsed]);
 
   useEffect(() => {
-    if (!isWaiting || timedOut) return undefined;
+    if (!isWaiting) return undefined;
     const poll = setInterval(() => {
+      setNow(Date.now());
       reloadResumes();
       reloadParsed();
     }, POLL_MS);
-    const stop = setTimeout(() => setTimedOut(true), PARSE_POLL_TIMEOUT_MS);
-    return () => {
-      clearInterval(poll);
-      clearTimeout(stop);
-    };
-  }, [isWaiting, timedOut, reloadResumes, reloadParsed]);
+    return () => clearInterval(poll);
+  }, [isWaiting, reloadResumes, reloadParsed]);
 
   async function analyze(resumeId) {
     setError(null);
-    setTimedOut(false);
-    setAnalyzingId(resumeId);
+    setBusyId(resumeId);
     try {
       await apiClient.post(`/api/documents/resumes/${resumeId}/parse/`, {});
     } catch (err) {
       setError(errorText(err, 'Could not start analysis.'));
     } finally {
-      setAnalyzingId(null);
+      setBusyId(null);
       reloadResumes();
     }
   }
 
-  async function handleUpload(e) {
+  async function makePrimary(resumeId) {
+    setError(null);
+    setBusyId(resumeId);
+    try {
+      await apiClient.post(`/api/users/resumes/${resumeId}/primary/`, {});
+    } catch (err) {
+      setError(errorText(err, 'Could not set the primary resume.'));
+    } finally {
+      setBusyId(null);
+      reloadResumes();
+    }
+  }
+
+  async function remove(resumeId) {
+    if (!window.confirm('Delete this resume?')) return;
+    setError(null);
+    setBusyId(resumeId);
+    try {
+      await apiClient.delete(`/api/users/resumes/${resumeId}/`);
+    } catch (err) {
+      setError(errorText(err, 'Could not delete the resume.'));
+    } finally {
+      setBusyId(null);
+      reloadResumes();
+      reloadParsed();
+    }
+  }
+
+  async function handleUpload(e, replaceId = null) {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
     setError(null);
+    if (tooLarge(file, maxBytes)) {
+      setError(`Resume must be under ${formatMb(maxBytes)}MB.`);
+      return;
+    }
     setUploading(true);
+    if (replaceId) setBusyId(replaceId);
     try {
       const formData = new FormData();
       formData.append('resume', file);
       const created = await apiClient.multipart('/api/users/resumes/', formData);
+      if (replaceId) {
+        // The failed row is replaced only after the new upload succeeded.
+        try {
+          await apiClient.delete(`/api/users/resumes/${replaceId}/`);
+        } catch (err) {
+          setError(errorText(err, 'Could not delete the failed resume.'));
+        }
+      }
       await analyze(created.id);
     } catch (err) {
       setError(errorText(err, 'Upload failed.'));
     } finally {
       setUploading(false);
+      setBusyId(null);
+      reloadResumes();
     }
   }
+
+  const readyCount = rows.filter((r) => r.status === 'ready').length;
 
   return (
     <section className="space-y-4">
       <SectionHeading
         title="Resume"
-        description="Upload your current resume as a PDF. We read its content and copy its layout, so tailored versions look like yours."
+        description="Upload your current resume as a PDF. We read its content and copy its layout, so tailored versions look like yours. Your primary resume is the one we tailor from. You can keep others."
       />
 
       <ul className="space-y-2">
-        {(resumes.data || []).map((resume) => {
+        {rows.map((resume) => {
           const parsed = resume.parse_status === 'ready' || parsedIds.has(resume.id);
-          const pending = resume.parse_status === 'pending';
+          const parsePending = resume.parse_status === 'pending';
           const failed = resume.parse_status === 'failed';
+          const primary = isPrimary(resume);
+          const busy = busyId === resume.id;
+          const uploadFailed =
+            resume.status === 'failed' || (resume.status === 'pending' && stale(resume));
+          const uploadWaiting = resume.status === 'pending' && !uploadFailed;
+          const hint =
+            readyCount === 1
+              ? 'Upload another resume and make it primary to delete this one.'
+              : 'Make another resume primary to delete this one.';
           const retry = (
             <button
               type="button"
               onClick={() => analyze(resume.id)}
-              disabled={analyzingId === resume.id}
+              disabled={busy}
               className={secondaryButtonClass}
             >
               Retry
             </button>
           );
+
+          let status;
+          if (uploadFailed) {
+            status = (
+              <span className="flex items-center gap-2">
+                <span className="text-xs text-destructive">
+                  {resume.status === 'failed' ? 'Upload failed' : 'Upload did not finish'}
+                </span>
+                <label
+                  className={`${secondaryButtonClass} cursor-pointer ${
+                    busy || uploading ? 'opacity-50' : ''
+                  }`}
+                >
+                  Retry
+                  <input
+                    type="file"
+                    accept=".pdf,application/pdf"
+                    onChange={(e) => handleUpload(e, resume.id)}
+                    disabled={busy || uploading}
+                    className="hidden"
+                  />
+                </label>
+              </span>
+            );
+          } else if (uploadWaiting) {
+            status = <span className="text-xs text-muted-foreground">Uploading…</span>;
+          } else if (parsePending && !stale(resume)) {
+            status = <span className="text-xs text-muted-foreground">Analyzing…</span>;
+          } else if (parsePending) {
+            status = (
+              <span className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">Taking longer than expected.</span>
+                {retry}
+              </span>
+            );
+          } else if (failed) {
+            status = (
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="truncate text-xs text-destructive" title={resume.parse_error}>
+                  Failed: {resume.parse_error}
+                </span>
+                {retry}
+              </span>
+            );
+          } else if (parsed) {
+            status = <span className="text-xs text-muted-foreground">Ready</span>;
+          } else if (resume.status === 'ready') {
+            status = (
+              <button
+                type="button"
+                onClick={() => analyze(resume.id)}
+                disabled={busy}
+                className={secondaryButtonClass}
+              >
+                Analyze
+              </button>
+            );
+          } else {
+            status = <span className="text-xs text-destructive">Upload {resume.status}</span>;
+          }
+
           return (
             <li
               key={resume.id}
-              className="flex items-center justify-between gap-3 rounded-md border border-border bg-card px-3 py-2 text-sm"
+              className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-card px-3 py-2 text-sm"
             >
-              <span className="truncate">{resume.label || resume.filename}</span>
-              {pending && !timedOut ? (
-                <span className="text-xs text-muted-foreground">Analyzing…</span>
-              ) : pending ? (
-                <span className="flex items-center gap-2">
-                  <span className="text-xs text-muted-foreground">Taking longer than expected.</span>
-                  {retry}
-                </span>
-              ) : failed ? (
-                <span className="flex min-w-0 items-center gap-2">
-                  <span
-                    className="truncate text-xs text-destructive"
-                    title={resume.parse_error}
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="truncate">{resume.label || resume.filename}</span>
+                {primary && <span className="text-xs font-medium">Primary</span>}
+              </span>
+              <span className="flex flex-wrap items-center gap-2">
+                {status}
+                {resume.status === 'ready' && !resume.is_default && (
+                  <button
+                    type="button"
+                    onClick={() => makePrimary(resume.id)}
+                    disabled={busy}
+                    className={secondaryButtonClass}
                   >
-                    Failed: {resume.parse_error}
-                  </span>
-                  {retry}
-                </span>
-              ) : parsed ? (
-                <span className="text-xs text-muted-foreground">Ready</span>
-              ) : resume.status === 'ready' ? (
-                <button
-                  type="button"
-                  onClick={() => analyze(resume.id)}
-                  disabled={analyzingId === resume.id}
-                  className={secondaryButtonClass}
-                >
-                  Analyze
-                </button>
-              ) : (
-                <span className="text-xs text-destructive">Upload {resume.status}</span>
-              )}
+                    Make primary
+                  </button>
+                )}
+                {primary ? (
+                  <>
+                    <span className="text-xs text-muted-foreground">{hint}</span>
+                    <button
+                      type="button"
+                      disabled
+                      title={hint}
+                      className={secondaryButtonClass}
+                    >
+                      Delete
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => remove(resume.id)}
+                    disabled={busy}
+                    className={secondaryButtonClass}
+                  >
+                    Delete
+                  </button>
+                )}
+              </span>
             </li>
           );
         })}
@@ -179,16 +332,34 @@ function ResumeSection({ parsedIds, reloadParsed }) {
   );
 }
 
-function SourcesSection() {
+function SourcesSection({ maxBytes }) {
   const sources = useApiResource('/api/documents/sources/');
   const [label, setLabel] = useState('');
   const [error, setError] = useState(null);
   const [uploading, setUploading] = useState(false);
+  const [now, setNow] = useState(0);
+
+  const reloadSources = sources.reload;
+  const stale = (source) => Boolean(now) && now - Date.parse(source.created_at) > SOURCE_POLL_TIMEOUT_MS;
+  const waiting = (sources.data || []).some((s) => s.status === 'pending' && !stale(s));
+
+  useEffect(() => {
+    if (!waiting) return undefined;
+    const poll = setInterval(() => {
+      setNow(Date.now());
+      reloadSources();
+    }, POLL_MS);
+    return () => clearInterval(poll);
+  }, [waiting, reloadSources]);
 
   async function handleUpload(e) {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
+    if (tooLarge(file, maxBytes)) {
+      setError(`File must be under ${formatMb(maxBytes)}MB.`);
+      return;
+    }
     setError(null);
     setUploading(true);
     try {
@@ -349,6 +520,7 @@ function CoverLetterForm({ initialBody }) {
 export default function ProfilePage() {
   const parsed = useApiResource('/api/documents/resumes/parsed/');
   const parsedIds = new Set((parsed.data || []).map((p) => p.resume));
+  const limits = useApiResource('/api/users/upload-limits/');
 
   return (
     <main className="min-h-screen bg-background px-4 py-12">
@@ -360,8 +532,11 @@ export default function ProfilePage() {
           </p>
         </div>
 
-        <ResumeSection parsedIds={parsedIds} reloadParsed={parsed.reload} />
-        <SourcesSection />
+        <ResumeSection
+          parsedIds={parsedIds} reloadParsed={parsed.reload}
+          maxBytes={limits.data?.resume_max_bytes}
+        />
+        <SourcesSection maxBytes={limits.data?.source_max_bytes} />
         <CoverLetterSection />
 
         {parsedIds.size > 0 && (
