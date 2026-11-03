@@ -1,7 +1,7 @@
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
-from .models import CoverLetterSample, Portfolio, Resume
+from .models import Portfolio, Resume
 from jobs.models import Search
 
 User = get_user_model()
@@ -53,13 +53,6 @@ class ResumeSerializer(serializers.ModelSerializer):
 class PortfolioSerializer(serializers.ModelSerializer):
     class Meta:
         model = Portfolio
-        fields = ('id', 'label', 'body', 'is_default', 'created_at', 'updated_at')
-        read_only_fields = ('id', 'is_default', 'created_at', 'updated_at')
-
-
-class CoverLetterSampleSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = CoverLetterSample
         fields = ('id', 'label', 'body', 'is_default', 'created_at', 'updated_at')
         read_only_fields = ('id', 'is_default', 'created_at', 'updated_at')
 

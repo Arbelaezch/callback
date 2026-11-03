@@ -21,10 +21,12 @@ from callback.config import LLM_MODEL, LLM_MAX_TOKENS, LLM_TIMEOUT_SECONDS
 logger = logging.getLogger(__name__)
 
 
-def _get_client(timeout: int = LLM_TIMEOUT_SECONDS) -> anthropic.Anthropic:
+def _get_client(timeout: int = LLM_TIMEOUT_SECONDS, max_retries: int | None = None) -> anthropic.Anthropic:
+    kwargs = {} if max_retries is None else {'max_retries': max_retries}
     return anthropic.Anthropic(
         api_key=os.environ['ANTHROPIC_API_KEY'],
         timeout=timeout,
+        **kwargs,
     )
 
 
@@ -54,6 +56,7 @@ def call_structured(
     schema: dict,
     max_tokens: int,
     timeout: int = LLM_TIMEOUT_SECONDS,
+    max_retries: int | None = None,
 ) -> dict:
     """
     Call the model and return JSON that conforms to `schema`.
@@ -67,7 +70,7 @@ def call_structured(
     ValueError   if the response was cut off, refused, or has no text.
     anthropic.*  re-raised on any Anthropic API error.
     """
-    message = _get_client(timeout).messages.create(
+    message = _get_client(timeout, max_retries).messages.create(
         model=model,
         max_tokens=max_tokens,
         system=system,

@@ -77,6 +77,35 @@ def upload_context_document(file, user_id: int, extension: str) -> str:
         raise
 
 
+def upload_cover_letter_sample(file, user_id: int, extension: str) -> str:
+    """
+    Upload a user's cover letter sample (.pdf or .txt) and return its S3 key.
+    In dev (USE_S3=False), saves under /tmp/cover-letters/.
+    """
+    key = f'cover-letters/user_{user_id}/{uuid.uuid4()}{extension}'
+
+    if not settings.USE_S3:
+        dev_path = Path('/tmp') / key
+        dev_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(dev_path, 'wb') as f:
+            for chunk in file.chunks():
+                f.write(chunk)
+        return key
+
+    content_type = 'application/pdf' if extension == '.pdf' else 'text/plain'
+    try:
+        _s3_client().upload_fileobj(
+            file,
+            settings.AWS_S3_BUCKET,
+            key,
+            ExtraArgs={'ContentType': content_type},
+        )
+        return key
+    except (BotoCoreError, ClientError) as e:
+        logger.exception('S3 upload failed for user %s: %s', user_id, e)
+        raise
+
+
 def delete_resume(s3_key: str) -> None:
     """Delete a resume from S3 (or /tmp in dev)."""
     if not settings.USE_S3:

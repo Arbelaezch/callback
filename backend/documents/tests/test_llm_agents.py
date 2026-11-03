@@ -1,9 +1,13 @@
+import base64
 from types import SimpleNamespace as NS
 from unittest.mock import MagicMock, patch
 
 from django.test import SimpleTestCase
 
+from callback.config import LLM_MODEL_TEXT_EXTRACTION, LLM_TIMEOUT_SECONDS_EXTRACTION
 from pipeline.llm import scout
+from pipeline.llm.schemas import PDF_TEXT_SCHEMA
+from pipeline.llm.text_extraction import extract_pdf_text
 
 
 def tool_use(name, input, id='t1'):
@@ -63,3 +67,24 @@ class ScoutTests(SimpleTestCase):
         self.assertEqual(result, {'facts': []})
         last = client.messages.create.call_args_list[-1].kwargs
         self.assertEqual(last['tool_choice'], {'type': 'tool', 'name': 'submit_brief'})
+
+
+class PdfTextExtractionTests(SimpleTestCase):
+    @patch('pipeline.llm.text_extraction.call_structured')
+    def test_sends_pdf_as_document_block_and_returns_stripped_text(self, mock_call):
+        mock_call.return_value = {'text': '  Dear team,\n\nHello.  '}
+        result = extract_pdf_text(b'%PDF-1.4 data')
+        self.assertEqual(result, 'Dear team,\n\nHello.')
+        kwargs = mock_call.call_args.kwargs
+        self.assertEqual(kwargs['model'], LLM_MODEL_TEXT_EXTRACTION)
+        self.assertIs(kwargs['schema'], PDF_TEXT_SCHEMA)
+        self.assertEqual(kwargs['timeout'], LLM_TIMEOUT_SECONDS_EXTRACTION)
+        self.assertEqual(kwargs['max_retries'], 0)
+        block = kwargs['content'][0]
+        self.assertEqual(block['type'], 'document')
+        self.assertEqual(block['source']['data'], base64.standard_b64encode(b'%PDF-1.4 data').decode('ascii'))
+
+    @patch('pipeline.llm.text_extraction.call_structured', side_effect=ValueError('bad'))
+    def test_propagates_structured_output_errors(self, _mock):
+        with self.assertRaises(ValueError):
+            extract_pdf_text(b'%PDF-')

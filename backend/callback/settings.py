@@ -117,6 +117,7 @@ REST_FRAMEWORK = {
     'DEFAULT_THROTTLE_RATES': {
         'parse': config.THROTTLE_RATE_PARSE,
         'generate': config.THROTTLE_RATE_GENERATE,
+        'cover_letter_upload': config.THROTTLE_RATE_COVER_LETTER_UPLOAD,
         'login': config.THROTTLE_RATE_LOGIN,
         'register': config.THROTTLE_RATE_REGISTER,
     },

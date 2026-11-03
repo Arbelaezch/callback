@@ -26,9 +26,13 @@ LLM_TIMEOUT_SECONDS = 30
 LLM_MODEL_SCOUT = 'claude-haiku-4-5-20251001'
 LLM_MODEL_WRITER = 'claude-sonnet-5-5'
 LLM_MODEL_VERIFIER = 'claude-haiku-4-5-20251001'
+LLM_MODEL_TEXT_EXTRACTION = 'claude-haiku-4-5-20251001'  # transcribing a short letter needs no strong model
 LLM_MAX_TOKENS_WRITER = 8192
 LLM_MAX_TOKENS_SCOUT = 2048
 LLM_TIMEOUT_SECONDS_LONG = 120  # PDF analysis and document writing
+# Cover letter sample extraction runs inside the upload request, so keep it under the 30s Next.js proxy limit
+LLM_TIMEOUT_SECONDS_EXTRACTION = 25
+LLM_MAX_TOKENS_EXTRACTION = 4096
 
 # Scout agent: tool-use rounds before it is forced to submit its brief.
 SCOUT_MAX_STEPS = 8
@@ -40,6 +44,10 @@ CONTEXT_SECTION_MAX_CHARS = 2000
 CONTEXT_UPLOAD_MAX_BYTES = 1024 * 1024
 RESUME_UPLOAD_MAX_BYTES = 5 * 1024 * 1024
 CONTEXT_UPLOAD_EXTENSIONS = ('.md', '.txt')
+COVER_LETTER_UPLOAD_MAX_BYTES = 5 * 1024 * 1024
+COVER_LETTER_UPLOAD_EXTENSIONS = ('.pdf', '.txt')
+# Extracted cover letter text longer than this is rejected (the writer prompt has no cap).
+COVER_LETTER_SAMPLE_MAX_CHARS = 15000
 
 # Jobs below this score are filtered out before the apply stage.
 LLM_SCORE_THRESHOLD = 7
@@ -94,10 +102,11 @@ SOURCE_STALE_AFTER_MINUTES = 2
 # Rate limits
 # -----------------------------------------------------------------
 
-# DRF throttle rates. Parse and generate are per user, login and register per IP.
+# DRF throttle rates. Parse, generate and cover letter upload are per user, login and register per IP.
 # Token refresh and logout are intentionally not throttled.
 THROTTLE_RATE_PARSE = '10/hour'
 THROTTLE_RATE_GENERATE = '10/hour'
+THROTTLE_RATE_COVER_LETTER_UPLOAD = '10/hour'
 THROTTLE_RATE_LOGIN = '10/min'
 THROTTLE_RATE_REGISTER = '5/hour'
 
