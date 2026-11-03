@@ -42,6 +42,8 @@ services:
     command: python manage.py runserver 0.0.0.0:8000
     volumes:
       - ./backend:/app      # live reload in dev
+      - dev_uploads_resumes:/tmp/resumes   # shared with celery (USE_S3=False)
+      - dev_uploads_context:/tmp/context
     ports:
       - "8000:8000"
     environment:
@@ -68,6 +70,8 @@ services:
     command: celery -A callback worker --loglevel=info
     volumes:
       - ./backend:/app
+      - dev_uploads_resumes:/tmp/resumes
+      - dev_uploads_context:/tmp/context
     environment:
       - DB_HOST=db
     env_file:
@@ -120,3 +124,5 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  dev_uploads_resumes:
+  dev_uploads_context:
