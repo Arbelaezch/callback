@@ -6,7 +6,23 @@ RESUME_ANALYSIS_SYSTEM = (
     'Copy every fact exactly as written: do not summarise, correct, add or '
     'drop anything. Use empty strings for fields the resume does not have. '
     'For the layout, measure what you see (fonts, margins, spacing, section '
-    'order and styling) so the same design can be re-rendered with new content.'
+    'order and styling) so the same design can be re-rendered with new content.\n'
+    'Sections: put a section in summary, experience, projects, education or '
+    'skills only when it clearly is that section. Every other section '
+    '(certifications, awards, languages, publications, volunteering, '
+    'leadership, coursework, interests, references and so on) goes in '
+    'additional_sections, with its heading exactly as printed as the title. '
+    'Never leave a section out because it has no fixed field.\n'
+    'List every printed section heading in layout.source_sections, in reading '
+    'order, with the content field its text was put in (placed_in). Content '
+    'without a heading, such as a contact block, is placed_in header.\n'
+    'For two-column or sidebar layouts, set columns to 2 and extract both '
+    'columns fully, main column first, then the sidebar.\n'
+    'Icons next to contact details: copy the text into the header fields and '
+    'ignore the glyph. Skill bars or ratings with no text: keep the skill name '
+    'only. Tables: read them row by row.\n'
+    'Report font_family as the actual typeface name (e.g. "Computer Modern", '
+    '"Calibri"), not a generic family.'
 )
 
 RESUME_ANALYSIS_USER = 'Extract the content and layout of this resume.'
@@ -55,6 +71,8 @@ emphasising what matches the job.
 accomplishments. Every fact must come from the current resume or the context \
 brief.
 - Keep the same JSON structure. Keep it tight enough for one page.
+- Keep additional_sections and their titles; you may select or trim entries \
+but never invent new ones.
 
 Cover letter rules:
 - Markdown. Write in the user's voice, using the voice profile and its \

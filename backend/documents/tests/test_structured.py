@@ -57,3 +57,20 @@ class StrictSchemaTests(SimpleTestCase):
         self.assertGreater(len(found), 5)
         self.assertTrue(all(o['additionalProperties'] is False for o in found))
         self.assertTrue(all(o['required'] == list(o['properties']) for o in found))
+
+    def test_analysis_schema_strict_includes_new_fields(self):
+        strict = client._strict_schema(RESUME_ANALYSIS_SCHEMA)
+        content = strict['properties']['content']
+        layout = strict['properties']['layout']
+        self.assertIn('additional_sections', content['required'])
+        self.assertIn('source_sections', layout['required'])
+        section = content['properties']['additional_sections']['items']
+        entry = section['properties']['entries']['items']
+        source = layout['properties']['source_sections']['items']
+        for node in (content, layout, section, entry, source):
+            self.assertIs(node['additionalProperties'], False)
+        self.assertEqual(entry['required'], ['heading', 'detail', 'dates', 'bullets'])
+        self.assertIn('additional', layout['properties']['section_order']['items']['enum'])
+        self.assertIn('additional', source['properties']['placed_in']['enum'])
+        # The non-strict schema keeps additional_sections optional for stored content.
+        self.assertNotIn('additional_sections', RESUME_ANALYSIS_SCHEMA['properties']['content']['required'])

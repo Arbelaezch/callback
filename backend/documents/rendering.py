@@ -18,8 +18,16 @@ from markdown_it import MarkdownIt
 from weasyprint import HTML
 from weasyprint.urls import URLFetcher
 
-KNOWN_SECTIONS = ['summary', 'experience', 'projects', 'education', 'skills']
-DEFAULT_SECTION_ORDER = ['summary', 'experience', 'projects', 'education', 'skills']
+KNOWN_SECTIONS = ['summary', 'experience', 'projects', 'education', 'skills', 'additional']
+DEFAULT_SECTION_ORDER = ['summary', 'experience', 'projects', 'education', 'skills', 'additional']
+DEFAULT_SECTION_TITLES = {
+    'summary': 'Summary',
+    'experience': 'Experience',
+    'projects': 'Projects',
+    'education': 'Education',
+    'skills': 'Skills',
+}
+_SECTION_TITLE_MAX = 60
 
 _HEX_COLOR = re.compile(r'^#[0-9a-fA-F]{6}$')
 
@@ -29,7 +37,17 @@ _FONT_STACKS = {
     'mono': 'Liberation Mono, Courier New, monospace',
 }
 _MONO_HINTS = ('mono', 'courier', 'consolas', 'menlo')
-_SERIF_HINTS = ('georgia', 'times', 'garamond', 'cambria', 'palatino', 'book', 'serif')
+# Checked before the serif hints so "Century Gothic" and "Roboto" stay sans.
+_SANS_HINTS = (
+    'sans', 'gothic', 'grotesk', 'helvetica', 'arial', 'calibri', 'lato', 'roboto',
+    'open sans', 'source sans', 'fira sans', 'raleway',
+)
+_SERIF_HINTS = (
+    'georgia', 'times', 'garamond', 'cambria', 'palatino', 'book', 'serif',
+    'computer modern', 'latin modern', 'cmu', 'lmroman', 'charter', 'baskerville', 'caslon',
+    'minion', 'libertine', 'crimson', 'merriweather', 'didot', 'bodoni', 'century', 'lora',
+    'playfair', 'spectral', 'tinos', 'cochin',
+)
 
 _markdown = MarkdownIt('commonmark', {'html': False, 'breaks': True}).enable('table')
 
@@ -38,7 +56,11 @@ def _font_stack(name) -> str:
     lowered = str(name or '').lower()
     if any(hint in lowered for hint in _MONO_HINTS):
         return _FONT_STACKS['mono']
-    if 'sans' not in lowered and any(hint in lowered for hint in _SERIF_HINTS):
+    if 'slab' in lowered:
+        return _FONT_STACKS['serif']
+    if any(hint in lowered for hint in _SANS_HINTS):
+        return _FONT_STACKS['sans']
+    if any(hint in lowered for hint in _SERIF_HINTS):
         return _FONT_STACKS['serif']
     return _FONT_STACKS['sans']
 
@@ -76,6 +98,7 @@ def resolve_layout(layout: dict | None) -> dict:
         'bullet_style': _choice(layout.get('bullet_style'), ('disc', 'dash', 'none'), 'disc'),
         'accent_color': layout.get('accent_color') if _HEX_COLOR.match(str(layout.get('accent_color') or '')) else '',
         'section_order': _section_order(layout.get('section_order')),
+        'section_titles': _section_titles(layout.get('source_sections')),
     }
 
 
@@ -84,6 +107,27 @@ def _section_order(requested) -> list[str]:
     order = [s for s in (requested or []) if s in KNOWN_SECTIONS]
     order = list(dict.fromkeys(order))
     return order + [s for s in DEFAULT_SECTION_ORDER if s not in order]
+
+
+def _section_titles(source_sections) -> dict[str, str]:
+    """Headings as printed on the source, falling back to the built-in titles.
+
+    Only plain text survives (whitespace collapsed, capped in length); the
+    template autoescapes it.
+    """
+    titles = dict(DEFAULT_SECTION_TITLES)
+    found = set()
+    for item in source_sections if isinstance(source_sections, list) else []:
+        if not isinstance(item, dict):
+            continue
+        key, title = item.get('placed_in'), item.get('title')
+        if key not in titles or key in found or not isinstance(title, str):
+            continue
+        title = ' '.join(title.split())[:_SECTION_TITLE_MAX].strip()
+        if title:
+            titles[key] = title
+            found.add(key)
+    return titles
 
 
 def render_resume_html(content: dict, layout: dict | None) -> str:

@@ -3,6 +3,12 @@ JSON schemas for structured LLM output.
 
 RESUME_CONTENT_SCHEMA is the single shape for resume facts: it is what resume
 analysis extracts, what the writer tailors, and what the PDF template renders.
+Sections outside the five fixed ones (certifications, awards, languages and so
+on) go in the optional `additional_sections` list, so nothing has to be dropped.
+
+RESUME_LAYOUT_SCHEMA describes the formatting. `source_sections` lists every
+heading printed on the source and where its content was put, so section titles
+can be re-used and anything left unplaced can be reported.
 """
 
 _STR = {'type': 'string'}
@@ -73,6 +79,33 @@ RESUME_CONTENT_SCHEMA = {
                 'required': ['items'],
             },
         },
+        # Optional (not in `required` below) so content stored before it existed stays valid.
+        'additional_sections': {
+            'type': 'array',
+            'items': {
+                'type': 'object',
+                'properties': {
+                    'title': {
+                        'type': 'string',
+                        'description': 'Section heading exactly as printed, e.g. Certifications',
+                    },
+                    'entries': {
+                        'type': 'array',
+                        'items': {
+                            'type': 'object',
+                            'properties': {
+                                'heading': _STR,
+                                'detail': _STR,
+                                'dates': _STR,
+                                'bullets': _STR_LIST,
+                            },
+                            'required': ['heading'],
+                        },
+                    },
+                },
+                'required': ['title', 'entries'],
+            },
+        },
     },
     'required': ['header', 'experience', 'education', 'skills'],
 }
@@ -98,7 +131,27 @@ RESUME_LAYOUT_SCHEMA = {
             'type': 'array',
             'items': {
                 'type': 'string',
-                'enum': ['summary', 'experience', 'projects', 'education', 'skills'],
+                'enum': ['summary', 'experience', 'projects', 'education', 'skills', 'additional'],
+            },
+        },
+        'source_sections': {
+            'type': 'array',
+            'description': (
+                'Every section heading printed on the resume, in reading order (main column '
+                'first, then sidebar), and the content field its text was put in.'
+            ),
+            'items': {
+                'type': 'object',
+                'properties': {
+                    'title': _STR,
+                    'placed_in': {
+                        'type': 'string',
+                        'enum': [
+                            'header', 'summary', 'experience', 'projects', 'education', 'skills', 'additional',
+                        ],
+                    },
+                },
+                'required': ['title', 'placed_in'],
             },
         },
         'section_title_style': {
@@ -108,7 +161,11 @@ RESUME_LAYOUT_SCHEMA = {
         'section_rule': {'type': 'boolean'},
         'bullet_style': {'type': 'string', 'enum': ['disc', 'dash', 'none']},
         'accent_color': {'type': 'string', 'description': 'Hex color, e.g. #1f3a5f, or empty'},
-        'columns': {'type': 'integer', 'enum': [1, 2]},
+        'columns': {
+            'type': 'integer',
+            'enum': [1, 2],
+            'description': '2 if the resume uses two columns or a sidebar, else 1',
+        },
     },
     'required': ['page_size', 'font_family', 'base_font_size_pt', 'section_order'],
 }

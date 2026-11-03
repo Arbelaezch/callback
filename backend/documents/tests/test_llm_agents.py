@@ -4,9 +4,15 @@ from unittest.mock import MagicMock, patch
 
 from django.test import SimpleTestCase
 
-from callback.config import LLM_MODEL_TEXT_EXTRACTION, LLM_TIMEOUT_SECONDS_EXTRACTION
+from callback.config import (
+    LLM_MODEL_TEXT_EXTRACTION,
+    LLM_MODEL_WRITER,
+    LLM_TIMEOUT_SECONDS_EXTRACTION,
+)
 from pipeline.llm import scout
-from pipeline.llm.schemas import PDF_TEXT_SCHEMA
+from pipeline.llm.prompts import WRITER_SYSTEM
+from pipeline.llm.resume_analysis import analyze_resume
+from pipeline.llm.schemas import PDF_TEXT_SCHEMA, RESUME_ANALYSIS_SCHEMA
 from pipeline.llm.text_extraction import extract_pdf_text
 
 
@@ -88,3 +94,28 @@ class PdfTextExtractionTests(SimpleTestCase):
     def test_propagates_structured_output_errors(self, _mock):
         with self.assertRaises(ValueError):
             extract_pdf_text(b'%PDF-')
+
+
+class AnalyzeResumeTests(SimpleTestCase):
+    @patch('pipeline.llm.resume_analysis.call_structured')
+    def test_sends_pdf_with_analysis_schema_and_section_rules(self, mock_call):
+        mock_call.return_value = {'content': {'experience': []}, 'layout': {}}
+        result = analyze_resume(b'%PDF-1.4 resume')
+        self.assertEqual(result, mock_call.return_value)
+        kwargs = mock_call.call_args.kwargs
+        self.assertEqual(kwargs['model'], LLM_MODEL_WRITER)
+        self.assertIs(kwargs['schema'], RESUME_ANALYSIS_SCHEMA)
+        block = kwargs['content'][0]
+        self.assertEqual(block['type'], 'document')
+        self.assertEqual(block['source']['type'], 'base64')
+        self.assertEqual(block['source']['data'], base64.standard_b64encode(b'%PDF-1.4 resume').decode('ascii'))
+        for phrase in ('additional_sections', 'source_sections', 'columns', 'Copy every fact exactly'):
+            self.assertIn(phrase, kwargs['system'])
+
+
+class WriterPromptTests(SimpleTestCase):
+    def test_keeps_no_invented_facts_rules_and_additional_sections_rule(self):
+        self.assertIn('Never invent employers, titles, dates, degrees, metrics', WRITER_SYSTEM)
+        self.assertIn('No invented facts.', WRITER_SYSTEM)
+        self.assertIn('Keep additional_sections and their titles', WRITER_SYSTEM)
+        self.assertIn('never invent new ones', WRITER_SYSTEM)
