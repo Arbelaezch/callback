@@ -26,6 +26,7 @@ export default function NewJobPage() {
   const primary = usable.find((r) => r.is_default);
   const selected = resumeId || String((primary || usable[0])?.id || '');
   const ready = !parsed.loading && !resumes.loading;
+  const primaryResume = (resumes.data || []).find((r) => r.is_default && r.status === 'ready');
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -34,8 +35,8 @@ export default function NewJobPage() {
       return setError('Please fill in the title, company and job description.');
     }
     setSubmitting(true);
+    let id = jobId;
     try {
-      let id = jobId;
       if (id === null) {
         const job = await apiClient.post('/api/documents/jobs/', { title, company, description });
         id = job.id;
@@ -44,9 +45,15 @@ export default function NewJobPage() {
       await apiClient.post(`/api/documents/jobs/${id}/generate/`, { resume_id: Number(selected) });
       router.push(`/jobs/${id}`);
     } catch (err) {
+      // Generation for this saved job is already running; show it instead of the form.
+      if (err?.status === 409 && id !== null) {
+        router.push(`/jobs/${id}`);
+        return undefined;
+      }
       setError(err?.detail || 'Something went wrong. Please try again.');
       setSubmitting(false);
     }
+    return undefined;
   }
 
   if (ready && usable.length === 0) {
@@ -95,7 +102,7 @@ export default function NewJobPage() {
         </Field>
 
         {usable.length > 1 && (
-          <Field label="Resume to start from" hint="Defaults to your primary resume. Change it on your profile.">
+          <Field label="Resume to start from" hint={'Defaults to your primary resume. "Generate again" on the job page always uses your primary resume.'}>
             <select value={selected} onChange={(e) => setResumeId(e.target.value)} className={inputClass}>
               {usable.map((r) => (
                 <option key={r.id} value={r.id}>
@@ -109,6 +116,15 @@ export default function NewJobPage() {
 
         {jobId !== null && (
           <p className="text-sm text-muted-foreground">Your job is saved. Retry to start generation.</p>
+        )}
+
+        {ready && primaryResume && !parsedIds.has(primaryResume.id) && (
+          <p className="text-sm text-muted-foreground">
+            Your primary resume has not been analyzed yet, so another resume is selected.{' '}
+            <Link href="/profile" className="underline">
+              Analyze it on your profile.
+            </Link>
+          </p>
         )}
 
         {error && <p className="text-sm text-destructive">{error}</p>}
