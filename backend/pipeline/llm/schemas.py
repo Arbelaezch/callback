@@ -190,3 +190,8 @@ VERIFICATION_SCHEMA = {
     },
     'required': ['unsupported_claims'],
 }
+
+PDF_TEXT_SCHEMA = {
+    'type': 'object',
+    'properties': {'text': {'type': 'string'}},
+}

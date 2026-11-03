@@ -13,10 +13,12 @@ from callback.throttles import ReadableThrottleMixin
 from callback.config import (
     CONTEXT_UPLOAD_EXTENSIONS,
     CONTEXT_UPLOAD_MAX_BYTES,
+    COVER_LETTER_UPLOAD_EXTENSIONS,
+    COVER_LETTER_UPLOAD_MAX_BYTES,
     DAILY_GENERATION_LIMIT,
     DAILY_PARSE_LIMIT,
 )
-from pipeline.storage import delete_resume, upload_context_document
+from pipeline.storage import delete_resume, upload_context_document, upload_cover_letter_sample
 from users.models import CoverLetterSample, Resume
 
 from .generation import create_pending_documents
@@ -40,7 +42,7 @@ from .serializers import (
     ParsedResumeSerializer,
     ParsedResumeSummarySerializer,
 )
-from .services import index_upload_source
+from .services import index_upload_source, ingest_cover_letter_sample
 from .staleness import fail_stale_documents, fail_stale_parses, fail_stale_sources
 from .tasks import generate_documents_task, parse_resume_task
 from .validation import validate_document_content
@@ -102,27 +104,74 @@ class ParsedResumeListView(APIView):
         return Response(ParsedResumeSummarySerializer(parsed, many=True).data)
 
 
-class CoverLetterSampleView(APIView):
-    """The user's default cover letter sample: the voice reference for writing."""
+class CoverLetterSampleView(ReadableThrottleMixin, APIView):
+    """The user's default cover letter sample: the voice reference for writing.
+
+    GET returns the ready default sample. POST uploads a .pdf or .txt, extracts its
+    text in the request and makes it the default. There is no way to paste text.
+    """
     permission_classes = [IsAuthenticated]
+    throttle_scope = 'cover_letter_upload'
 
     def _sample(self, user):
-        return CoverLetterSample.objects.filter(user=user).order_by('-is_default', '-created_at').first()
+        return (
+            CoverLetterSample.objects.filter(user=user, status='ready')
+            .order_by('-is_default', '-created_at')
+            .first()
+        )
+
+    def _payload(self, sample):
+        if sample is None:
+            return {'body': '', 'filename': '', 'updated_at': None}
+        return {
+            'body': sample.body,
+            'filename': sample.filename,
+            'updated_at': sample.updated_at.isoformat() if sample.updated_at else None,
+        }
 
     def get(self, request):
-        sample = self._sample(request.user)
-        return Response({'body': sample.body if sample else ''})
+        return Response(self._payload(self._sample(request.user)))
 
-    def put(self, request):
-        body = request.data.get('body')
-        if not isinstance(body, str) or not body.strip():
-            return Response({'detail': 'body is required.'}, status=status.HTTP_400_BAD_REQUEST)
-        sample = self._sample(request.user)
-        if sample is None:
-            sample = CoverLetterSample(user=request.user, label='Default', is_default=True)
-        sample.body = body
-        sample.save()
-        return Response({'body': sample.body})
+    def post(self, request):
+        file = request.FILES.get('file')
+        if not file:
+            return Response({'detail': 'No file provided.'}, status=status.HTTP_400_BAD_REQUEST)
+        extension = os.path.splitext(file.name)[1].lower()
+        if extension not in COVER_LETTER_UPLOAD_EXTENSIONS:
+            return Response(
+                {'detail': f'File must be one of: {", ".join(COVER_LETTER_UPLOAD_EXTENSIONS)}.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if file.size > COVER_LETTER_UPLOAD_MAX_BYTES:
+            return Response({'detail': 'File is too large.'}, status=status.HTTP_400_BAD_REQUEST)
+        if extension == '.pdf':
+            header = file.read(5)
+            file.seek(0)
+            if header != b'%PDF-':
+                return Response({'detail': 'File is not a valid PDF.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Never default until ingest succeeds, so readers of is_default only see ready rows.
+        sample = CoverLetterSample.objects.create(
+            user=request.user, label=file.name[:100], filename=file.name[:255],
+            status='pending', is_default=False,
+        )
+        try:
+            sample.s3_key = upload_cover_letter_sample(file, request.user.id, extension)
+            sample.save(update_fields=['s3_key'])
+            ingest_cover_letter_sample(sample)
+        except Exception:
+            sample.refresh_from_db()
+            if sample.error:
+                return Response({'detail': sample.error}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+            if sample.status == 'pending':
+                logger.exception('Cover letter sample upload failed for sample %s', sample.pk)
+                sample.status = 'failed'
+                sample.save(update_fields=['status', 'updated_at'])
+            return Response(
+                {'detail': 'Upload failed. Please try again.'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+        return Response(self._payload(sample), status=status.HTTP_201_CREATED)
 
 
 class ContextSourceListView(APIView):

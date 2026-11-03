@@ -423,25 +423,116 @@ class ProfileEndpointTests(ApiTestCase):
         self.assertEqual([row['id'] for row in response.data], [mine.pk])
         self.assertNotIn('content', response.data[0])
 
-    def test_cover_letter_sample_roundtrip(self):
-        url = '/api/documents/cover-letter-sample/'
-        self.assertEqual(self.client.get(url).data, {'body': ''})
-        self.assertEqual(self.client.put(url, {'body': 'Hello there'}, format='json').status_code, 200)
-        self.assertEqual(self.client.put(url, {'body': 'Updated'}, format='json').status_code, 200)
-        self.assertEqual(self.client.get(url).data, {'body': 'Updated'})
-        from users.models import CoverLetterSample
-        self.assertEqual(CoverLetterSample.objects.filter(user=self.user).count(), 1)
 
-    def test_cover_letter_sample_edits_the_existing_onboarding_sample(self):
-        from users.models import CoverLetterSample
-        CoverLetterSample.objects.create(user=self.user, body='old', is_default=True)
-        self.client.put('/api/documents/cover-letter-sample/', {'body': 'new'}, format='json')
-        self.assertEqual(list(CoverLetterSample.objects.filter(user=self.user).values_list('body', flat=True)), ['new'])
+COVER_LETTER_URL = '/api/documents/cover-letter-sample/'
 
-    def test_cover_letter_sample_rejects_empty_body_and_other_users_samples_are_untouched(self):
+
+@patch('documents.services.extract_pdf_text')
+@patch('documents.services.read_file')
+@patch('documents.views.upload_cover_letter_sample', return_value='k')
+class CoverLetterSampleUploadTests(ApiTestCase):
+    def _post(self, name='letter.txt', data=b'Dear team,\n\nHello.'):
+        return self.client.post(COVER_LETTER_URL, {'file': SimpleUploadedFile(name, data)}, format='multipart')
+
+    def _sample(self, user=None, **kwargs):
         from users.models import CoverLetterSample
-        theirs = CoverLetterSample.objects.create(user=self.other, body='theirs', is_default=True)
-        self.assertEqual(self.client.put('/api/documents/cover-letter-sample/', {'body': '  '}, format='json').status_code, 400)
-        self.client.put('/api/documents/cover-letter-sample/', {'body': 'mine'}, format='json')
+        return CoverLetterSample.objects.create(user=user or self.user, **kwargs)
+
+    def _rows(self, user=None):
+        from users.models import CoverLetterSample
+        return CoverLetterSample.objects.filter(user=user or self.user)
+
+    def test_txt_upload_becomes_the_ready_default_and_get_returns_it(self, upload, read_file, extract):
+        read_file.return_value = b'  Dear team,\n\nHello.  '
+        old = self._sample(body='old', is_default=True)
+        response = self._post()
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data['body'], 'Dear team,\n\nHello.')
+        self.assertEqual(response.data['filename'], 'letter.txt')
+        self.assertTrue(response.data['updated_at'])
+        sample = self._rows().get(filename='letter.txt')
+        self.assertEqual((sample.status, sample.is_default, sample.s3_key), ('ready', True, 'k'))
+        old.refresh_from_db()
+        self.assertFalse(old.is_default)
+        self.assertEqual(self.client.get(COVER_LETTER_URL).data, response.data)
+        extract.assert_not_called()
+
+    def test_pdf_upload_uses_extracted_text(self, upload, read_file, extract):
+        read_file.return_value = b'%PDF-1.4 bytes'
+        extract.return_value = 'From the PDF.'
+        response = self._post('letter.pdf', b'%PDF-1.4 bytes')
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data['body'], 'From the PDF.')
+        extract.assert_called_once_with(b'%PDF-1.4 bytes')
+
+    def test_invalid_files_return_400_and_create_no_row(self, upload, read_file, extract):
+        cases = [
+            (lambda: self.client.post(COVER_LETTER_URL, {}, format='multipart'), 'No file provided.'),
+            (lambda: self._post('letter.docx', b'x'), 'File must be one of: .pdf, .txt.'),
+            (lambda: self._post('letter.pdf', b'not a pdf'), 'File is not a valid PDF.'),
+        ]
+        for send, detail in cases:
+            response = send()
+            self.assertEqual(response.status_code, 400)
+            self.assertEqual(response.data['detail'], detail)
+        with patch('documents.views.COVER_LETTER_UPLOAD_MAX_BYTES', 3):
+            response = self._post('letter.txt', b'four')
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data['detail'], 'File is too large.')
+        self.assertFalse(self._rows().exists())
+        upload.assert_not_called()
+
+    def test_empty_text_returns_422_and_keeps_the_previous_sample(self, upload, read_file, extract):
+        read_file.return_value = b'   '
+        self._sample(body='kept', filename='old.txt', is_default=True)
+        response = self._post()
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.data['detail'], 'Document has no text')
+        self.assertEqual(self.client.get(COVER_LETTER_URL).data['body'], 'kept')
+        self.assertEqual(self._rows().get(filename='letter.txt').status, 'failed')
+
+    def test_storage_failure_returns_500_and_marks_the_row_failed(self, upload, read_file, extract):
+        upload.side_effect = OSError('disk full')
+        response = self._post()
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(response.data['detail'], 'Upload failed. Please try again.')
+        sample = self._rows().get()
+        self.assertEqual(sample.status, 'failed')
+        self.assertFalse(sample.is_default)
+
+    def test_storage_read_failure_returns_500(self, upload, read_file, extract):
+        read_file.side_effect = OSError('missing')
+        response = self._post()
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(self._rows().get().status, 'failed')
+
+    def test_put_is_not_allowed(self, upload, read_file, extract):
+        response = self.client.put(COVER_LETTER_URL, {'body': 'pasted'}, format='json')
+        self.assertEqual(response.status_code, 405)
+        self.assertFalse(self._rows().exists())
+
+    def test_get_ignores_pending_and_failed_rows(self, upload, read_file, extract):
+        empty = {'body': '', 'filename': '', 'updated_at': None}
+        self.assertEqual(self.client.get(COVER_LETTER_URL).data, empty)
+        self._sample(body='', status='pending')
+        self._sample(body='broken', status='failed', error='Document has no text')
+        self.assertEqual(self.client.get(COVER_LETTER_URL).data, empty)
+        self._sample(body='good', status='ready', is_default=True)
+        self._sample(body='', status='pending')
+        self.assertEqual(self.client.get(COVER_LETTER_URL).data['body'], 'good')
+
+    def test_other_users_sample_is_never_returned_or_changed(self, upload, read_file, extract):
+        theirs = self._sample(user=self.other, body='theirs', is_default=True)
+        self.assertEqual(self.client.get(COVER_LETTER_URL).data['body'], '')
+        read_file.return_value = b'mine'
+        self.assertEqual(self._post().status_code, 201)
         theirs.refresh_from_db()
+        self.assertTrue(theirs.is_default)
         self.assertEqual(theirs.body, 'theirs')
+        self.assertEqual(self.client.get(COVER_LETTER_URL).data['body'], 'mine')
+
+    def test_requires_authentication(self, upload, read_file, extract):
+        self.client.force_authenticate(None)
+        self.assertEqual(self.client.get(COVER_LETTER_URL).status_code, 401)
+        self.assertEqual(self._post().status_code, 401)
+        self.assertFalse(self._rows().exists())

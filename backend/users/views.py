@@ -29,6 +29,7 @@ from .models import CoverLetterSample, Portfolio, Resume
 from jobs.models import Agent, Search
 from callback.config import (
     CONTEXT_UPLOAD_MAX_BYTES,
+    COVER_LETTER_UPLOAD_MAX_BYTES,
     REFRESH_ROTATION_GRACE_SECONDS,
     RESUME_UPLOAD_MAX_BYTES,
 )
@@ -392,4 +393,5 @@ class UploadLimitsView(APIView):
         return Response({
             'resume_max_bytes': RESUME_UPLOAD_MAX_BYTES,
             'source_max_bytes': CONTEXT_UPLOAD_MAX_BYTES,
+            'cover_letter_max_bytes': COVER_LETTER_UPLOAD_MAX_BYTES,
         })

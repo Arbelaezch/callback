@@ -130,3 +130,22 @@ class GenerateDocumentsTaskTests(TestCase):
         self.assertEqual((args[0].pk, args[1].pk), (resume_doc.pk, letter_doc.pk))
         self.assertEqual(args[2], parsed_second)
         self.assertEqual(args[3], 'my sample')
+
+    def test_task_ignores_samples_that_are_not_ready(self):
+        from users.models import CoverLetterSample
+
+        resume = Resume.objects.create(user=self.user, s3_key='a', filename='a.pdf', status='ready')
+        ParsedResume.objects.create(user=self.user, resume=resume, content=RESUME)
+        good = CoverLetterSample.objects.create(user=self.user, body='good', is_default=True)
+        CoverLetterSample.objects.create(user=self.user, body='', status='pending', s3_key='k')
+        resume_doc, letter_doc = create_pending_documents(self.job, resume)
+        with patch('documents.generation.generate_documents') as gen:
+            generate_documents_task(resume_doc.pk, letter_doc.pk)
+        self.assertEqual(gen.call_args.args[3], 'good')
+
+        good.delete()
+        CoverLetterSample.objects.create(user=self.user, body='', status='failed', s3_key='k2')
+        GeneratedDocument.objects.filter(job_posting=self.job).update(status='pending')
+        with patch('documents.generation.generate_documents') as gen:
+            generate_documents_task(resume_doc.pk, letter_doc.pk)
+        self.assertEqual(gen.call_args.args[3], '')

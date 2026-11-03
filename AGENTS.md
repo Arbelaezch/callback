@@ -97,7 +97,7 @@ AWS
   /users                 # CustomUser, Resume, CoverLetterSample, auth views
   /documents             # the product (see "Document generation")
     models.py, serializers.py, views.py, urls.py, admin.py
-    services.py          # parse_resume(), index_upload_source()
+    services.py          # parse_resume(), index_upload_source(), ingest_cover_letter_sample()
     generation.py        # generate_documents(): scout -> writer -> verifier
     search.py            # index_sections(), search_sections() (Postgres FTS)
     sectioning.py        # split_sections(): markdown/plain text -> heading-level sections
@@ -204,7 +204,7 @@ All calls go through `pipeline/llm`. Callers never import the Anthropic SDK dire
 - `_strict_schema` closes every object (`additionalProperties: false`) and marks **all properties required**, because the API caps optional fields per schema (24). Absent values are therefore sent as empty strings or arrays. Schemas in `schemas.py` are written normally; do not add `required`/`additionalProperties` by hand.
 - Truncated output (`stop_reason == 'max_tokens'`) and refusals raise `ValueError`.
 - `run_scout` (`scout.py`) is the only agent loop. It uses `tool_choice: auto` and forces `submit_brief` only on its last step (Haiku supports that).
-- `analyze_resume`, `build_voice_profile`, `write_documents`, `verify_documents` are the other public functions. Prompts are in `prompts.py`.
+- `analyze_resume`, `extract_pdf_text`, `build_voice_profile`, `write_documents`, `verify_documents` are the other public functions. Prompts are in `prompts.py`.
 
 When adding or changing a prompt, run the live smoke path at least once (see "Testing"): mocked tests cannot catch prompt or schema problems.
 
@@ -241,7 +241,9 @@ JWT via `djangorestframework-simplejwt`. Tokens in httpOnly cookies, never local
 
 **Supporting documents** (`ContextSource` kind `upload`) follow the same idea: create `pending`, store the file, index it, then mark `ready`, or `failed` with the error.
 
-`pipeline/storage.py`: `upload_resume`, `upload_context_document`, `read_file`, `delete_resume` (also used to delete context files), `get_resume_url`. With `USE_S3=False` files go to `/tmp/<key>`.
+**Cover letter sample** (`CoverLetterSample`, `.pdf` or `.txt`, no paste): create the row `pending` and not default, store the file, extract its text in the request (`services.ingest_cover_letter_sample`: UTF-8 decode, or `pipeline.llm.extract_pdf_text` for a PDF), then mark it `ready` and default (the model clears the user's other defaults), or `failed` with the error. A failed upload never replaces the current sample. Readers (`CoverLetterSampleView`, `generate_documents_task`) filter `status='ready'`. Replaced samples stay as non-default rows with their files.
+
+`pipeline/storage.py`: `upload_resume`, `upload_context_document`, `upload_cover_letter_sample`, `read_file`, `delete_resume` (also used to delete context files), `get_resume_url`. With `USE_S3=False` files go to `/tmp/<key>`.
 
 ---
 
@@ -257,6 +259,7 @@ JWT via `djangorestframework-simplejwt`. Tokens in httpOnly cookies, never local
 | Method | Path | Description |
 |---|---|---|
 | GET, POST | `/resumes/` | List resumes; upload a PDF (field `resume`, max 5 MB) |
+| GET | `/upload-limits/` | `{resume_max_bytes, source_max_bytes, cover_letter_max_bytes}` so the client can check sizes before uploading |
 
 ### Documents: `/api/documents/` (all require auth, all scoped to the user)
 | Method | Path | Description |
@@ -264,7 +267,7 @@ JWT via `djangorestframework-simplejwt`. Tokens in httpOnly cookies, never local
 | POST | `/resumes/<id>/parse/` | Queue analysis of a ready resume (202). 409 if a parse of this resume was requested under 3 minutes ago and is still pending; 429 after 30 accepted analyses per user in a rolling 24 hours (`ParseRequest` rows). POST throttled at 10/hour per user (429 `{detail}` + `Retry-After`); GET is not |
 | GET | `/resumes/<id>/parse/` | Parsed content and layout (404 if not parsed) |
 | GET | `/resumes/parsed/` | Which resumes are parsed (no content) |
-| GET, PUT | `/cover-letter-sample/` | The default cover letter sample (`{body}`) |
+| GET, POST | `/cover-letter-sample/` | GET: the ready default sample `{body, filename, updated_at}` (empty strings and `null` if none). POST: upload a `.pdf`/`.txt` (field `file`, max 5 MB); text is extracted in the request and the new sample becomes the default (201, same shape). 400 on a missing file, wrong extension, oversize or a PDF without `%PDF-` magic bytes; 422 `{detail}` if extraction fails (no text, too long, not UTF-8, unreadable PDF); 500 on a storage error. POST throttled at 10/hour per user (429 `{detail}` + `Retry-After`); GET is not. No PUT: the sample cannot be pasted |
 | GET, POST | `/sources/` | List sources; upload a `.md`/`.txt` (field `file`, optional `label`) |
 | DELETE | `/sources/<id>/` | Remove a source and its file |
 | GET, POST | `/jobs/` | List job postings (with documents); create one |
@@ -321,11 +324,12 @@ Do not define `CELERY_BEAT_SCHEDULE`; scheduling is DB-backed via `django-celery
 ## Backend module interfaces
 
 ### `callback/config.py`
-LLM models and limits (`LLM_MODEL_SCOUT/WRITER/VERIFIER`, `LLM_MAX_TOKENS_*`, `LLM_TIMEOUT_SECONDS(_LONG)`), `SCOUT_MAX_STEPS`, `SCOUT_TOOL_RESULT_MAX_CHARS`, `VOICE_SAMPLE_MAX_CHARS`, `CONTEXT_SECTION_MAX_CHARS`, `CONTEXT_UPLOAD_MAX_BYTES`, `CONTEXT_UPLOAD_EXTENSIONS`, plus JSearch and scoring constants (V2 groundwork).
+LLM models and limits (`LLM_MODEL_SCOUT/WRITER/VERIFIER/TEXT_EXTRACTION`, `LLM_MAX_TOKENS_*`, `LLM_TIMEOUT_SECONDS(_LONG)`), `SCOUT_MAX_STEPS`, `SCOUT_TOOL_RESULT_MAX_CHARS`, `VOICE_SAMPLE_MAX_CHARS`, `CONTEXT_SECTION_MAX_CHARS`, `CONTEXT_UPLOAD_MAX_BYTES`, `CONTEXT_UPLOAD_EXTENSIONS`, `COVER_LETTER_UPLOAD_MAX_BYTES`, `COVER_LETTER_UPLOAD_EXTENSIONS`, `COVER_LETTER_SAMPLE_MAX_CHARS`, throttle rates (`THROTTLE_RATE_*`, including `THROTTLE_RATE_COVER_LETTER_UPLOAD`), plus JSearch and scoring constants (V2 groundwork).
 
 ### `documents/services.py`
 - `parse_resume(resume) -> ParsedResume`: requires `resume.status == 'ready'`; re-running replaces the parse.
 - `index_upload_source(source) -> int`: replaces sections, marks ready or failed, returns section count.
+- `ingest_cover_letter_sample(sample) -> CoverLetterSample`: extracts the stored file's text into `body`, marks it ready and default, or failed (with `error` for extraction problems, empty for storage errors) and re-raises.
 
 ### `documents/search.py`
 - `search_sections(user, query, source_id=None, limit=8)`: OR-ed words, ranked, user-scoped, only `ready` sources. **The only retrieval entry point**: swap its internals to move to embeddings without touching agents.
@@ -340,7 +344,7 @@ LLM models and limits (`LLM_MODEL_SCOUT/WRITER/VERIFIER`, `LLM_MAX_TOKENS_*`, `L
 - `resolve_layout(layout)`, `render_resume_html(content, layout)`, `render_cover_letter_html(markdown, header, layout)`, `html_to_pdf(html) -> (bytes, page_count)`.
 
 ### `pipeline/storage.py`
-`upload_resume(file, user_id)`, `upload_context_document(file, user_id, extension)`, `read_file(key)`, `delete_resume(key)`, `get_resume_url(key)`.
+`upload_resume(file, user_id)`, `upload_context_document(file, user_id, extension)`, `upload_cover_letter_sample(file, user_id, extension)`, `read_file(key)`, `delete_resume(key)`, `get_resume_url(key)`.
 
 ---
 

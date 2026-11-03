@@ -4,12 +4,10 @@ import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { apiClient } from '@/lib/apiClient';
 import { useApiResource } from '@/hooks/useApiResource';
-import Field from '@/components/ui/Field';
 import {
   inputClass,
   primaryButtonClass,
   secondaryButtonClass,
-  textareaClass,
 } from '@/components/ui/styles';
 
 const POLL_MS = 3000;
@@ -451,68 +449,71 @@ function SourcesSection({ maxBytes }) {
   );
 }
 
-function CoverLetterSection() {
+function CoverLetterSection({ maxBytes }) {
   const sample = useApiResource('/api/documents/cover-letter-sample/');
-
-  if (sample.loading) return <p className="text-sm text-muted-foreground">Loading…</p>;
-  if (sample.error) {
-    return (
-      <p className="text-sm text-destructive">
-        {errorText(sample.error, 'Could not load your cover letter.')}
-      </p>
-    );
-  }
-  return <CoverLetterForm initialBody={sample.data.body} />;
-}
-
-function CoverLetterForm({ initialBody }) {
-  const [body, setBody] = useState(initialBody);
-  const [saved, setSaved] = useState(true);
-  const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [error, setError] = useState(null);
 
-  async function save() {
+  async function handleUpload(e) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (tooLarge(file, maxBytes)) {
+      setError(`File must be under ${formatMb(maxBytes)}MB.`);
+      return;
+    }
     setError(null);
-    setSaving(true);
+    setUploading(true);
     try {
-      await apiClient.put('/api/documents/cover-letter-sample/', { body });
-      setSaved(true);
+      const formData = new FormData();
+      formData.append('file', file);
+      await apiClient.multipart('/api/documents/cover-letter-sample/', formData);
     } catch (err) {
-      setError(errorText(err, 'Could not save.'));
+      setError(errorText(err, 'Upload failed.'));
     } finally {
-      setSaving(false);
+      setUploading(false);
+      sample.reload();
     }
   }
+
+  const body = sample.data?.body;
 
   return (
     <section className="space-y-4">
       <SectionHeading
         title="Cover letter sample"
-        description="A cover letter you have written. It teaches the writer your voice; its facts are never reused."
+        description="Upload a cover letter you have written (PDF or text file). It teaches the writer your voice; its facts are never reused. To change it, upload a new one."
       />
-      <Field label="Your cover letter">
-        <textarea
-          rows={10}
-          value={body}
-          onChange={(e) => {
-            setBody(e.target.value);
-            setSaved(false);
-          }}
-          className={textareaClass}
-        />
-      </Field>
-      <div className="flex items-center gap-3">
-        <button
-          type="button"
-          onClick={save}
-          disabled={saving || saved || !body.trim()}
-          className={primaryButtonClass}
-        >
-          {saving ? 'Saving…' : 'Save'}
-        </button>
-        {saved && body && <span className="text-xs text-muted-foreground">Saved</span>}
+      {sample.loading && <p className="text-sm text-muted-foreground">Loading…</p>}
+      {!sample.loading && !sample.error && (
+        body ? (
+          <div className="space-y-2">
+            <p className="text-sm font-medium">{sample.data.filename || 'Current sample'}</p>
+            <div className="max-h-64 overflow-y-auto whitespace-pre-wrap rounded-md border border-border bg-card p-3 text-sm">
+              {body}
+            </div>
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">No cover letter uploaded yet.</p>
+        )
+      )}
+      <div>
+        <label className={`${secondaryButtonClass} cursor-pointer`}>
+          {uploading ? 'Reading…' : body ? 'Replace (.pdf or .txt)' : 'Upload .pdf or .txt'}
+          <input
+            type="file"
+            accept=".pdf,.txt,application/pdf,text/plain"
+            onChange={handleUpload}
+            disabled={uploading}
+            className="hidden"
+          />
+        </label>
       </div>
-      {error && <p className="text-sm text-destructive">{error}</p>}
+      {(error || sample.error) && (
+        <p className="text-sm text-destructive">
+          {error || errorText(sample.error, 'Could not load your cover letter.')}
+        </p>
+      )}
     </section>
   );
 }
@@ -537,7 +538,7 @@ export default function ProfilePage() {
           maxBytes={limits.data?.resume_max_bytes}
         />
         <SourcesSection maxBytes={limits.data?.source_max_bytes} />
-        <CoverLetterSection />
+        <CoverLetterSection maxBytes={limits.data?.cover_letter_max_bytes} />
 
         {parsedIds.size > 0 && (
           <Link href="/jobs/new" className={`${primaryButtonClass} inline-block`}>

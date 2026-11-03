@@ -98,15 +98,32 @@ class CoverLetterSample(models.Model):
     The LLM uses this to match tone and style when generating
     job-specific cover letters — not submitted directly.
 
-    Users can upload an existing cover letter here; the name 'sample'
-    signals that this is source material, not the final output.
+    The user uploads an existing letter as a .pdf or .txt file; its text is
+    extracted into `body`. The name 'sample' signals that this is source
+    material, not the final output.
+
+    `status` defaults to 'ready' because legacy rows and V2 onboarding rows
+    are created with a body already in place. The upload view creates rows
+    as 'pending' explicitly, and only a successful ingest makes a row ready
+    and default.
     """
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('ready', 'Ready'),
+        ('failed', 'Failed'),
+    ]
+
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='cover_letter_samples')
     label = models.CharField(max_length=100, blank=True)
     body = models.TextField(
-        help_text='Paste a cover letter you have written. '
-                  'The agent will use this to match your tone and voice.'
+        blank=True,
+        help_text='Text extracted from the uploaded cover letter. '
+                  'The writer uses it to match your tone and voice.'
     )
+    s3_key = models.CharField(max_length=500, blank=True)
+    filename = models.CharField(max_length=255, blank=True)
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='ready')
+    error = models.TextField(blank=True)
     is_default = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

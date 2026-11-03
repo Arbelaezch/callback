@@ -121,3 +121,12 @@ Generated resume (JSON):
 Generated cover letter:
 {cover_letter}
 """
+
+PDF_TEXT_EXTRACTION_SYSTEM = (
+    "You transcribe documents. Copy the text of the attached letter exactly as written. "
+    "Keep paragraph breaks as blank lines. Drop page numbers and running headers or footers. "
+    "Never add, reword, correct or summarise anything. "
+    "If the document has no readable text, return an empty string."
+)
+
+PDF_TEXT_EXTRACTION_USER = 'Transcribe the text of this document.'

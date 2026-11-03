@@ -45,7 +45,7 @@ def generate_documents_task(resume_doc_id: int, letter_doc_id: int) -> None:
         )
         return
     sample = (
-        CoverLetterSample.objects.filter(user=user)
+        CoverLetterSample.objects.filter(user=user, status='ready')
         .order_by('-is_default', '-created_at')
         .first()
     )
