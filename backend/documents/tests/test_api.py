@@ -5,6 +5,9 @@ from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APITestCase
 
+from documents.views import (
+    NO_PRIMARY_RESUME_ERROR, PRIMARY_NOT_PARSED_ERROR, RESUME_NOT_PARSED_ERROR,
+)
 from documents.models import ContextSource, GeneratedDocument, JobPosting, ParsedResume
 from users.models import Resume
 
@@ -148,6 +151,85 @@ class JobAndGenerationTests(ApiTestCase):
         resume_doc = docs.get(kind='resume')
         letter_doc = docs.get(kind='cover_letter')
         delay.assert_called_once_with(resume_doc.pk, letter_doc.pk)
+
+    def _primary(self, user=None, status='ready', parsed=True):
+        resume = self._resume(user=user, status=status)
+        resume.is_default = True
+        resume.save()
+        if parsed:
+            ParsedResume.objects.create(user=resume.user, resume=resume)
+        return resume
+
+    @patch('documents.views.generate_documents_task.delay')
+    def test_generate_without_resume_id_uses_primary(self, delay):
+        job, other_resume = self._job(), self._resume()
+        ParsedResume.objects.create(user=self.user, resume=other_resume)
+        primary = self._primary()
+        response = self.client.post(f'/api/documents/jobs/{job.pk}/generate/', {}, format='json')
+        self.assertEqual(response.status_code, 202)
+        docs = GeneratedDocument.objects.filter(job_posting=job)
+        self.assertEqual(docs.count(), 2)
+        self.assertEqual(set(docs.values_list('resume_id', flat=True)), {primary.pk})
+
+    @patch('documents.views.generate_documents_task.delay')
+    def test_generate_explicit_resume_id_overrides_primary(self, delay):
+        job, other_resume = self._job(), self._resume()
+        ParsedResume.objects.create(user=self.user, resume=other_resume)
+        self._primary()
+        response = self.client.post(
+            f'/api/documents/jobs/{job.pk}/generate/', {'resume_id': other_resume.pk}, format='json',
+        )
+        self.assertEqual(response.status_code, 202)
+        docs = GeneratedDocument.objects.filter(job_posting=job)
+        self.assertEqual(docs.count(), 2)
+        self.assertEqual(set(docs.values_list('resume_id', flat=True)), {other_resume.pk})
+
+    @patch('documents.views.generate_documents_task.delay')
+    def test_generate_without_resume_id_requires_primary(self, delay):
+        job, resume = self._job(), self._resume()
+        ParsedResume.objects.create(user=self.user, resume=resume)
+        response = self.client.post(f'/api/documents/jobs/{job.pk}/generate/', {}, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data['detail'], NO_PRIMARY_RESUME_ERROR)
+        self.assertFalse(GeneratedDocument.objects.filter(job_posting=job).exists())
+
+    @patch('documents.views.generate_documents_task.delay')
+    def test_generate_without_resume_id_ignores_non_ready_primary(self, delay):
+        job = self._job()
+        self._primary(status='pending')
+        response = self.client.post(f'/api/documents/jobs/{job.pk}/generate/', {}, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data['detail'], NO_PRIMARY_RESUME_ERROR)
+
+    @patch('documents.views.generate_documents_task.delay')
+    def test_generate_without_resume_id_requires_parsed_primary(self, delay):
+        job = self._job()
+        self._primary(parsed=False)
+        response = self.client.post(f'/api/documents/jobs/{job.pk}/generate/', {}, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data['detail'], PRIMARY_NOT_PARSED_ERROR)
+
+    @patch('documents.views.generate_documents_task.delay')
+    def test_generate_primary_is_scoped_to_user(self, delay):
+        job = self._job()
+        self._primary(user=self.other)
+        response = self.client.post(f'/api/documents/jobs/{job.pk}/generate/', {}, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data['detail'], NO_PRIMARY_RESUME_ERROR)
+
+    @patch('documents.views.generate_documents_task.delay')
+    def test_generate_rejects_non_ready_resume_id(self, delay):
+        job, resume = self._job(), self._resume(status='failed')
+        ParsedResume.objects.create(user=self.user, resume=resume)
+        response = self.client.post(f'/api/documents/jobs/{job.pk}/generate/', {'resume_id': resume.pk})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data['detail'], RESUME_NOT_PARSED_ERROR)
+
+    @patch('documents.views.generate_documents_task.delay')
+    def test_generate_rejects_non_numeric_resume_id(self, delay):
+        job = self._job()
+        response = self.client.post(f'/api/documents/jobs/{job.pk}/generate/', {'resume_id': 'abc'})
+        self.assertEqual(response.status_code, 400)
 
     @patch('documents.views.generate_documents_task.delay', side_effect=Exception('broker down'))
     def test_generate_returns_503_and_fails_rows_when_queueing_fails(self, delay):

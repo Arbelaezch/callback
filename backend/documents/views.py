@@ -210,8 +210,15 @@ class JobPostingDetailView(APIView):
         return Response(JobPostingSerializer(posting).data)
 
 
+NO_PRIMARY_RESUME_ERROR = 'Set a primary resume on your profile first.'
+PRIMARY_NOT_PARSED_ERROR = (
+    'Your primary resume has not been analyzed yet. Analyze it on your profile first.'
+)
+RESUME_NOT_PARSED_ERROR = 'That resume has not been parsed yet.'
+
+
 class GenerateView(ReadableThrottleMixin, APIView):
-    """POST {resume_id} queues generation of a tailored resume and cover letter."""
+    """POST {resume_id?} queues generation of a tailored resume and cover letter. Without resume_id, uses the user's primary resume."""
     permission_classes = [IsAuthenticated]
     throttle_scope = 'generate'
 
@@ -220,18 +227,28 @@ class GenerateView(ReadableThrottleMixin, APIView):
         if posting is None:
             return Response({'detail': 'Job posting not found.'}, status=status.HTTP_404_NOT_FOUND)
 
-        try:
-            resume_id = int(request.data.get('resume_id'))
-        except (TypeError, ValueError):
-            return Response({'detail': 'resume_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
-        parsed = ParsedResume.objects.filter(
-            resume_id=resume_id, user=request.user,
-        ).select_related('resume').first()
-        if parsed is None:
-            return Response(
-                {'detail': 'That resume has not been parsed yet.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        raw = request.data.get('resume_id')
+        if raw in (None, ''):
+            primary = Resume.objects.filter(user=request.user, is_default=True, status='ready').first()
+            if primary is None:
+                return Response({'detail': NO_PRIMARY_RESUME_ERROR}, status=status.HTTP_400_BAD_REQUEST)
+            parsed = ParsedResume.objects.filter(
+                resume=primary, user=request.user,
+            ).select_related('resume').first()
+            if parsed is None:
+                return Response({'detail': PRIMARY_NOT_PARSED_ERROR}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            try:
+                resume_id = int(raw)
+            except (TypeError, ValueError):
+                return Response(
+                    {'detail': 'resume_id must be a number.'}, status=status.HTTP_400_BAD_REQUEST,
+                )
+            parsed = ParsedResume.objects.filter(
+                resume_id=resume_id, user=request.user, resume__status='ready',
+            ).select_related('resume').first()
+            if parsed is None:
+                return Response({'detail': RESUME_NOT_PARSED_ERROR}, status=status.HTTP_400_BAD_REQUEST)
         fail_stale_documents(request.user)
         with transaction.atomic():
             lock_user(request.user)

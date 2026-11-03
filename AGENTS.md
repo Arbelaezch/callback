@@ -269,7 +269,7 @@ JWT via `djangorestframework-simplejwt`. Tokens in httpOnly cookies, never local
 | DELETE | `/sources/<id>/` | Remove a source and its file |
 | GET, POST | `/jobs/` | List job postings (with documents); create one |
 | GET | `/jobs/<id>/` | One posting with its documents |
-| POST | `/jobs/<id>/generate/` | `{resume_id}`: create the pending rows, queue generation (202). Resume must be parsed; 503 if queueing fails (rows marked failed). 409 if this job has pending documents under 5 minutes old; 429 after 30 generations per user in a rolling 24 hours. Throttled at 10/hour per user (429 `{detail}` + `Retry-After`) |
+| POST | `/jobs/<id>/generate/` | `{resume_id?}`: create the pending rows, queue generation (202). Without `resume_id`, uses the user's primary resume (`is_default`, `status='ready'`); 400 if there is no primary or it is not parsed. An explicit resume must be ready and parsed; 503 if queueing fails (rows marked failed). 409 if this job has pending documents under 5 minutes old; 429 after 30 generations per user in a rolling 24 hours. Throttled at 10/hour per user (429 `{detail}` + `Retry-After`) |
 | GET, PATCH | `/documents/<id>/` | Read a document (includes read-only `resume`); save the user's edits (sets `edited`). PATCH: 409 unless `ready`, 400 `{content: [...]}` on malformed content |
 | GET | `/documents/<id>/preview/` | The document as HTML |
 | GET | `/documents/<id>/export/` | PDF download; `X-Page-Count` header |

@@ -24,9 +24,10 @@ function latestOfKind(documents, kind) {
 export default function JobPage() {
   const { id } = useParams();
   const job = useApiResource(`/api/documents/jobs/${id}/`);
-  const parsed = useApiResource('/api/documents/resumes/parsed/');
+  const resumes = useApiResource('/api/users/resumes/');
   const [tab, setTab] = useState('resume');
   const [error, setError] = useState(null);
+  const [errorStatus, setErrorStatus] = useState(null);
   const [regenerating, setRegenerating] = useState(false);
   const [timedOut, setTimedOut] = useState(false);
 
@@ -35,6 +36,7 @@ export default function JobPage() {
   const isPending = TABS.some(({ kind }) => latestOfKind(documents, kind)?.status === 'pending');
   const current = latestOfKind(documents, tab);
   const reloadJob = job.reload;
+  const primary = (resumes.data || []).find((r) => r.is_default && r.status === 'ready');
 
   useEffect(() => {
     if (!isPending || timedOut) return undefined;
@@ -47,10 +49,6 @@ export default function JobPage() {
   }, [isPending, timedOut, reloadJob]);
 
   async function regenerate() {
-    const sourceResume = latestOfKind(documents, 'resume')?.resume;
-    const parsedIds = (parsed.data || []).map((p) => p.resume);
-    const resumeId = parsedIds.includes(sourceResume) ? sourceResume : parsedIds[0];
-    if (!resumeId) return setError('Analyze a resume on your profile first.');
     if (
       documents.some((d) => d.edited) &&
       !window.confirm('Generating again creates a new version. Your edits stay on the old one. Continue?')
@@ -58,13 +56,16 @@ export default function JobPage() {
       return undefined;
     }
     setError(null);
+    setErrorStatus(null);
     setTimedOut(false);
     setRegenerating(true);
     try {
-      await apiClient.post(`/api/documents/jobs/${id}/generate/`, { resume_id: resumeId });
+      // The backend uses the user's primary resume when no resume_id is sent.
+      await apiClient.post(`/api/documents/jobs/${id}/generate/`, {});
       reloadJob();
     } catch (err) {
       setError(err?.detail || 'Could not start generation.');
+      setErrorStatus(err?.status ?? null);
       // Another request already started this job; show its pending documents.
       if (err?.status === 409) reloadJob();
     } finally {
@@ -98,17 +99,44 @@ export default function JobPage() {
             <h1 className="text-2xl font-semibold tracking-tight">{job.data.title}</h1>
             <p className="text-sm text-muted-foreground">{job.data.company}</p>
           </div>
-          <button
-            type="button"
-            onClick={regenerate}
-            disabled={regenerating || (isPending && !timedOut)}
-            className={secondaryButtonClass}
-          >
-            Generate again
-          </button>
+          <div className="space-y-1 sm:text-right">
+            <button
+              type="button"
+              onClick={regenerate}
+              disabled={regenerating || (isPending && !timedOut)}
+              className={secondaryButtonClass}
+            >
+              Generate again
+            </button>
+            {primary && (
+              <p className="text-xs text-muted-foreground">
+                Uses your primary resume: {primary.label || primary.filename}
+              </p>
+            )}
+            {!resumes.loading && !primary && (
+              <p className="text-xs text-muted-foreground">
+                Set a primary resume on your profile to generate again.{' '}
+                <Link href="/profile" className="underline">
+                  Go to your profile
+                </Link>
+              </p>
+            )}
+          </div>
         </div>
 
-        {error && <p className="text-sm text-destructive">{error}</p>}
+        {error && (
+          <p className="text-sm text-destructive">
+            {error}
+            {errorStatus === 400 && (
+              <>
+                {' '}
+                <Link href="/profile" className="underline">
+                  Go to your profile
+                </Link>
+              </>
+            )}
+          </p>
+        )}
         {job.error && job.data && (
           <p className="text-sm text-destructive">{job.error.detail || 'Could not refresh this job.'}</p>
         )}
