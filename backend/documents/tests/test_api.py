@@ -83,6 +83,7 @@ class ResumeParseTests(ApiTestCase):
         ParsedResume.objects.create(user=self.user, resume=resume, content={'header': {'name': 'Ada'}})
         response = self.client.get(f'/api/documents/resumes/{resume.pk}/parse/')
         self.assertEqual(response.data['content']['header']['name'], 'Ada')
+        self.assertEqual(response.data['layout_notices'], [])
 
 
 class SourceTests(ApiTestCase):
@@ -405,6 +406,18 @@ class RenderEndpointTests(ApiTestCase):
         self.assertEqual(self.client.get(f'/api/documents/documents/{foreign.pk}/export/').status_code, 404)
         self.assertEqual(self.client.get(f'/api/documents/documents/{foreign.pk}/preview/').status_code, 404)
 
+    def test_document_detail_includes_layout_notices_for_resume_only(self):
+        resume_doc = self._doc()
+        resume_doc.layout = {'columns': 2}
+        resume_doc.save()
+        letter = self._doc(kind='cover_letter')
+        letter.layout = {'columns': 2}
+        letter.save()
+        got = self.client.get(f'/api/documents/documents/{resume_doc.pk}/')
+        self.assertEqual(got.status_code, 200)
+        self.assertEqual(got.data['layout_notices'][0]['code'], 'columns_simplified')
+        self.assertEqual(self.client.get(f'/api/documents/documents/{letter.pk}/').data['layout_notices'], [])
+
     def test_export_reflects_user_edits(self):
         doc = self._doc()
         self.client.patch(f'/api/documents/documents/{doc.pk}/', {
@@ -422,6 +435,14 @@ class ProfileEndpointTests(ApiTestCase):
         response = self.client.get('/api/documents/resumes/parsed/')
         self.assertEqual([row['id'] for row in response.data], [mine.pk])
         self.assertNotIn('content', response.data[0])
+        self.assertEqual(response.data[0]['layout_notices'], [])
+
+    def test_parsed_resume_list_includes_layout_notices(self):
+        ParsedResume.objects.create(
+            user=self.user, resume=self._resume(), content={}, layout={'columns': 2},
+        )
+        response = self.client.get('/api/documents/resumes/parsed/')
+        self.assertEqual([n['code'] for n in response.data[0]['layout_notices']], ['columns_simplified'])
 
 
 COVER_LETTER_URL = '/api/documents/cover-letter-sample/'

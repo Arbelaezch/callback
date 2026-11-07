@@ -64,6 +64,24 @@ class ValidateDocumentContentTests(SimpleTestCase):
             ['content.header.nickname: unknown field'],
         )
 
+    def test_additional_sections_valid(self):
+        content = {**RESUME, 'additional_sections': [{'title': 'Certifications', 'entries': [
+            {'heading': 'AWS SA', 'detail': 'Amazon', 'dates': '2023', 'bullets': ['Associate']},
+            {'heading': 'CKA'},
+        ]}]}
+        self.assertEqual(validate_document_content('resume', content), [])
+
+    def test_unknown_key_in_additional_entry_rejected(self):
+        content = {**RESUME, 'additional_sections': [{'title': 'Awards', 'entries': [{'heading': 'X', 'foo': 1}]}]}
+        self.assertEqual(
+            validate_document_content('resume', content),
+            ['content.additional_sections[0].entries[0].foo: unknown field'],
+        )
+
+    def test_content_without_additional_sections_valid(self):
+        self.assertNotIn('additional_sections', RESUME)
+        self.assertEqual(validate_document_content('resume', RESUME), [])
+
     def test_valid_cover_letter_content_has_no_errors(self):
         self.assertEqual(validate_document_content('cover_letter', {'header': {'name': 'Ada'}}), [])
 

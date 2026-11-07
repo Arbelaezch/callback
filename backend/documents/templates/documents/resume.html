@@ -14,9 +14,9 @@
 
 {% for key in layout.section_order %}
   {% if key == "summary" and content.summary %}
-  <section><h2>Summary</h2><p>{{ content.summary }}</p></section>
+  <section><h2>{{ layout.section_titles.summary }}</h2><p>{{ content.summary }}</p></section>
   {% elif key == "experience" and content.experience %}
-  <section><h2>Experience</h2>
+  <section><h2>{{ layout.section_titles.experience }}</h2>
     {% for job in content.experience %}
     <div class="entry">
       <div class="entry-head"><span>{{ job.company }}{% if job.location %}, {{ job.location }}{% endif %}</span>
@@ -27,7 +27,7 @@
     {% endfor %}
   </section>
   {% elif key == "projects" and content.projects %}
-  <section><h2>Projects</h2>
+  <section><h2>{{ layout.section_titles.projects }}</h2>
     {% for project in content.projects %}
     <div class="entry">
       <div class="entry-head"><span>{{ project.name }}</span>{% if project.link %}<span class="dates">{{ project.link }}</span>{% endif %}</div>
@@ -36,7 +36,7 @@
     {% endfor %}
   </section>
   {% elif key == "education" and content.education %}
-  <section><h2>Education</h2>
+  <section><h2>{{ layout.section_titles.education }}</h2>
     {% for school in content.education %}
     <div class="entry">
       <div class="entry-head"><span>{{ school.school }}</span>
@@ -47,11 +47,23 @@
     {% endfor %}
   </section>
   {% elif key == "skills" and content.skills %}
-  <section><h2>Skills</h2>
+  <section><h2>{{ layout.section_titles.skills }}</h2>
     {% for group in content.skills %}
     <p class="skill-row">{% if group.category %}<strong>{{ group.category }}:</strong> {% endif %}{{ group.items|join:", " }}</p>
     {% endfor %}
   </section>
+  {% elif key == "additional" and content.additional_sections %}
+    {% for s in content.additional_sections %}{% if s.entries %}
+  <section><h2>{{ s.title }}</h2>
+      {% for e in s.entries %}
+    <div class="entry">
+      <div class="entry-head"><span>{{ e.heading }}</span>{% if e.dates %}<span class="dates">{{ e.dates }}</span>{% endif %}</div>
+      {% if e.detail %}<div class="entry-sub">{{ e.detail }}</div>{% endif %}
+      {% if e.bullets %}<ul>{% for b in e.bullets %}<li>{{ b }}</li>{% endfor %}</ul>{% endif %}
+    </div>
+      {% endfor %}
+  </section>
+    {% endif %}{% endfor %}
   {% endif %}
 {% endfor %}
 </body>

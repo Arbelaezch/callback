@@ -4,9 +4,18 @@ from unittest.mock import MagicMock, patch
 
 from django.test import SimpleTestCase
 
-from callback.config import LLM_MODEL_TEXT_EXTRACTION, LLM_TIMEOUT_SECONDS_EXTRACTION
+from callback.config import (
+    LLM_MAX_TOKENS_RESUME_LAYOUT,
+    LLM_MAX_TOKENS_WRITER,
+    LLM_MODEL_TEXT_EXTRACTION,
+    LLM_MODEL_WRITER,
+    LLM_TIMEOUT_SECONDS_EXTRACTION,
+    LLM_TIMEOUT_SECONDS_LONG,
+)
 from pipeline.llm import scout
-from pipeline.llm.schemas import PDF_TEXT_SCHEMA
+from pipeline.llm.prompts import RESUME_CONTENT_SYSTEM, RESUME_LAYOUT_SYSTEM, WRITER_SYSTEM
+from pipeline.llm.resume_analysis import analyze_resume
+from pipeline.llm.schemas import PDF_TEXT_SCHEMA, RESUME_CONTENT_ANALYSIS_SCHEMA, RESUME_LAYOUT_SCHEMA
 from pipeline.llm.text_extraction import extract_pdf_text
 
 
@@ -88,3 +97,79 @@ class PdfTextExtractionTests(SimpleTestCase):
     def test_propagates_structured_output_errors(self, _mock):
         with self.assertRaises(ValueError):
             extract_pdf_text(b'%PDF-')
+
+
+class AnalyzeResumeTests(SimpleTestCase):
+    PDF = b'%PDF-1.4 resume'
+    CONTENT = {'header': {'name': 'Ada'}, 'experience': [], 'additional_sections': [{'title': 'Awards', 'entries': []}]}
+    SOURCE_SECTIONS = [{'title': 'Awards', 'placed_in': 'additional'}]
+    LAYOUT = {
+        'page_size': 'letter', 'font_family': 'Calibri', 'base_font_size_pt': 10.5,
+        'margins_in': {'top': 0.5, 'right': 0.5, 'bottom': 0.5, 'left': 0.5},
+        'section_order': ['experience', 'additional'], 'columns': 2,
+    }
+
+    def _responses(self):
+        return [{'content': self.CONTENT, 'source_sections': self.SOURCE_SECTIONS}, dict(self.LAYOUT)]
+
+    @patch('pipeline.llm.resume_analysis.call_structured')
+    def test_makes_two_calls_content_then_layout(self, mock_call):
+        mock_call.side_effect = self._responses()
+        analyze_resume(self.PDF)
+        self.assertEqual(mock_call.call_count, 2)
+        first, second = (c.kwargs for c in mock_call.call_args_list)
+        self.assertIs(first['schema'], RESUME_CONTENT_ANALYSIS_SCHEMA)
+        self.assertIs(second['schema'], RESUME_LAYOUT_SCHEMA)
+        self.assertEqual(first['max_tokens'], LLM_MAX_TOKENS_WRITER)
+        self.assertEqual(second['max_tokens'], LLM_MAX_TOKENS_RESUME_LAYOUT)
+        data = base64.standard_b64encode(self.PDF).decode('ascii')
+        for kwargs in (first, second):
+            self.assertEqual(kwargs['model'], LLM_MODEL_WRITER)
+            self.assertEqual(kwargs['timeout'], LLM_TIMEOUT_SECONDS_LONG)
+            block = kwargs['content'][0]
+            self.assertEqual(block['type'], 'document')
+            self.assertEqual(block['source']['type'], 'base64')
+            self.assertEqual(block['source']['data'], data)
+        self.assertEqual(first['system'], RESUME_CONTENT_SYSTEM)
+        self.assertEqual(second['system'], RESUME_LAYOUT_SYSTEM)
+
+    @patch('pipeline.llm.resume_analysis.call_structured')
+    def test_merges_source_sections_into_layout(self, mock_call):
+        mock_call.side_effect = self._responses()
+        result = analyze_resume(self.PDF)
+        self.assertEqual(result, {
+            'content': self.CONTENT,
+            'layout': {**self.LAYOUT, 'source_sections': self.SOURCE_SECTIONS},
+        })
+        self.assertEqual(result['layout']['columns'], 2)
+
+    @patch('pipeline.llm.resume_analysis.call_structured')
+    def test_missing_source_sections_becomes_empty_list(self, mock_call):
+        mock_call.side_effect = [{'content': self.CONTENT}, dict(self.LAYOUT)]
+        self.assertEqual(analyze_resume(self.PDF)['layout']['source_sections'], [])
+
+    def test_prompts_split_rules(self):
+        for phrase in ('additional_sections', 'source_sections', 'Copy every fact exactly', 'do not summarise'):
+            self.assertIn(phrase, RESUME_CONTENT_SYSTEM)
+        for phrase in ('columns', 'margin', 'section_order', 'font_family', 'Do not transcribe the content.'):
+            self.assertIn(phrase, RESUME_LAYOUT_SYSTEM)
+
+    @patch('pipeline.llm.resume_analysis.call_structured')
+    def test_layout_failure_propagates(self, mock_call):
+        mock_call.side_effect = [{'content': self.CONTENT, 'source_sections': []}, ValueError('cut off')]
+        with self.assertRaises(ValueError):
+            analyze_resume(self.PDF)
+
+    @patch('pipeline.llm.resume_analysis.call_structured', side_effect=ValueError('refused'))
+    def test_content_failure_propagates_without_layout_call(self, mock_call):
+        with self.assertRaises(ValueError):
+            analyze_resume(self.PDF)
+        self.assertEqual(mock_call.call_count, 1)
+
+
+class WriterPromptTests(SimpleTestCase):
+    def test_keeps_no_invented_facts_rules_and_additional_sections_rule(self):
+        self.assertIn('Never invent employers, titles, dates, degrees, metrics', WRITER_SYSTEM)
+        self.assertIn('No invented facts.', WRITER_SYSTEM)
+        self.assertIn('Keep additional_sections and their titles', WRITER_SYSTEM)
+        self.assertIn('never invent new ones', WRITER_SYSTEM)
