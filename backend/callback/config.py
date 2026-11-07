@@ -86,6 +86,10 @@ REFRESH_ROTATION_GRACE_SECONDS = 30
 # Change TIME_ZONE in settings.py to shift all scheduled tasks together.
 CELERY_TIMEZONE = 'UTC'
 
+# Task results are only read while a job is running, so drop them from the
+# result backend after a day instead of letting them pile up.
+CELERY_RESULT_EXPIRES = 24 * 60 * 60
+
 
 # -----------------------------------------------------------------
 # Background task timeouts

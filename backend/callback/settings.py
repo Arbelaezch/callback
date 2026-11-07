@@ -176,6 +176,7 @@ CELERY_RESULT_BACKEND = os.environ['CELERY_RESULT_BACKEND']
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_TIMEZONE = config.CELERY_TIMEZONE
+CELERY_RESULT_EXPIRES = config.CELERY_RESULT_EXPIRES
 
 # Beat schedule is DB-backed via django-celery-beat.
 # PeriodicTask entries are managed by `python manage.py sync_schedules`
