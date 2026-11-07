@@ -1,5 +1,5 @@
 # Harness config for Callback. Plugin defaults (providers, pricing, loop limits) live in
-# /Users/christianarbelaez/code/claude-harness/scripts/defaults.toml; anything set here overrides them for this project only.
+# /Users/christianarbelaez/code/software-factory/scripts/defaults.toml; anything set here overrides them for this project only.
 
 [project]
 name = "Callback"
