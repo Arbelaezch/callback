@@ -1,31 +1,45 @@
 """Prompt text for the document generation stages."""
 
-RESUME_ANALYSIS_SYSTEM = (
-    'You analyse resumes. Given a resume PDF, extract (1) its content as '
-    'structured data and (2) its visual layout as a formatting spec. '
+# Resume analysis is two calls on the same PDF (see schemas.py): content first, then layout.
+RESUME_CONTENT_SYSTEM = (
+    'You analyse resumes. Given a resume PDF, extract its content as '
+    'structured data. '
     'Copy every fact exactly as written: do not summarise, correct, add or '
-    'drop anything. Use empty strings for fields the resume does not have. '
-    'For the layout, measure what you see (fonts, margins, spacing, section '
-    'order and styling) so the same design can be re-rendered with new content.\n'
+    'drop anything. Use empty strings for fields the resume does not have.\n'
     'Sections: put a section in summary, experience, projects, education or '
     'skills only when it clearly is that section. Every other section '
     '(certifications, awards, languages, publications, volunteering, '
     'leadership, coursework, interests, references and so on) goes in '
     'additional_sections, with its heading exactly as printed as the title. '
     'Never leave a section out because it has no fixed field.\n'
-    'List every printed section heading in layout.source_sections, in reading '
+    'List every printed section heading in source_sections, in reading '
     'order, with the content field its text was put in (placed_in). Content '
     'without a heading, such as a contact block, is placed_in header.\n'
-    'For two-column or sidebar layouts, set columns to 2 and extract both '
-    'columns fully, main column first, then the sidebar.\n'
+    'For two-column or sidebar layouts, extract both columns fully, main '
+    'column first, then the sidebar.\n'
     'Icons next to contact details: copy the text into the header fields and '
     'ignore the glyph. Skill bars or ratings with no text: keep the skill name '
-    'only. Tables: read them row by row.\n'
-    'Report font_family as the actual typeface name (e.g. "Computer Modern", '
-    '"Calibri"), not a generic family.'
+    'only. Tables: read them row by row.'
 )
 
-RESUME_ANALYSIS_USER = 'Extract the content and layout of this resume.'
+RESUME_CONTENT_USER = 'Extract the content of this resume and list its section headings.'
+
+RESUME_LAYOUT_SYSTEM = (
+    'You analyse resume layouts. Given a resume PDF, describe its visual '
+    'layout as a formatting spec so the same design can be re-rendered with '
+    'new content. Measure what you see: fonts, font size, page margins, line '
+    'spacing, header alignment, section title styling, rules, bullets and '
+    'accent colour.\n'
+    'section_order lists the fixed sections (summary, experience, projects, '
+    'education, skills) in the order they appear; use additional for where '
+    'any other sections (certifications, awards, languages and so on) sit.\n'
+    'Set columns to 2 if the resume uses two columns or a sidebar, else 1.\n'
+    'Report font_family as the actual typeface name (e.g. "Computer Modern", '
+    '"Calibri"), not a generic family.\n'
+    'Do not transcribe the content.'
+)
+
+RESUME_LAYOUT_USER = 'Describe the layout of this resume.'
 
 
 SCOUT_SYSTEM = """\
@@ -73,6 +87,10 @@ brief.
 - Keep the same JSON structure. Keep it tight enough for one page.
 - Keep additional_sections and their titles; you may select or trim entries \
 but never invent new ones.
+- Never drop a whole section of the current resume (publications, awards, \
+links, coursework and so on). Trim its entries for relevance, but keep at \
+least the entries that best fit the job, and keep every link or profile the \
+user listed.
 
 Cover letter rules:
 - Markdown. Write in the user's voice, using the voice profile and its \

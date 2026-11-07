@@ -43,7 +43,7 @@ function SectionHeading({ title, description }) {
   );
 }
 
-function ResumeSection({ parsedIds, reloadParsed, maxBytes }) {
+function ResumeSection({ parsedIds, noticesByResume, reloadParsed, maxBytes }) {
   const resumes = useApiResource('/api/users/resumes/');
   const [error, setError] = useState(null);
   const [uploading, setUploading] = useState(false);
@@ -170,7 +170,7 @@ function ResumeSection({ parsedIds, reloadParsed, maxBytes }) {
     <section className="space-y-4">
       <SectionHeading
         title="Resume"
-        description="Upload your current resume as a PDF. We read its content and copy its layout, so tailored versions look like yours. Your primary resume is the one we tailor from. You can keep others."
+        description="Upload your current resume as a PDF. We read its content and copy its layout, so tailored versions look like yours (two-column layouts are simplified to one column). Your primary resume is the one we tailor from. You can keep others."
       />
 
       <ul className="space-y-2">
@@ -242,7 +242,17 @@ function ResumeSection({ parsedIds, reloadParsed, maxBytes }) {
               </span>
             );
           } else if (parsed) {
-            status = <span className="text-xs text-muted-foreground">Ready</span>;
+            const notices = noticesByResume.get(resume.id) || [];
+            status = (
+              <span className="flex min-w-0 flex-col">
+                <span className="text-xs text-muted-foreground">Ready</span>
+                {notices.map((notice, i) => (
+                  <span key={i} className="truncate text-xs text-muted-foreground" title={notice.message}>
+                    {notice.message}
+                  </span>
+                ))}
+              </span>
+            );
           } else if (resume.status === 'ready') {
             status = (
               <button
@@ -521,6 +531,7 @@ function CoverLetterSection({ maxBytes }) {
 export default function ProfilePage() {
   const parsed = useApiResource('/api/documents/resumes/parsed/');
   const parsedIds = new Set((parsed.data || []).map((p) => p.resume));
+  const noticesByResume = new Map((parsed.data || []).map((p) => [p.resume, p.layout_notices || []]));
   const limits = useApiResource('/api/users/upload-limits/');
 
   return (
@@ -534,7 +545,7 @@ export default function ProfilePage() {
         </div>
 
         <ResumeSection
-          parsedIds={parsedIds} reloadParsed={parsed.reload}
+          parsedIds={parsedIds} noticesByResume={noticesByResume} reloadParsed={parsed.reload}
           maxBytes={limits.data?.resume_max_bytes}
         />
         <SourcesSection maxBytes={limits.data?.source_max_bytes} />

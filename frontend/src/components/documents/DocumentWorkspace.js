@@ -110,8 +110,21 @@ export default function DocumentWorkspace({ doc, company }) {
     error: 'Not saved',
   }[saveState];
 
+  const notices = isResume ? doc.layout_notices || [] : [];
+
   return (
     <div className="space-y-4">
+      {notices.length > 0 && (
+        <div className="rounded-md border border-border bg-card p-3 text-sm">
+          <p className="mb-2 font-medium">About this layout</p>
+          <ul className="list-disc space-y-1 pl-5">
+            {notices.map((notice, i) => (
+              <li key={i}>{notice.message}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {claims.length > 0 && (
         <div className="rounded-md border border-border bg-card p-3 text-sm">
           <p className="font-medium">Check these before you send it</p>

@@ -103,9 +103,14 @@ def resolve_layout(layout: dict | None) -> dict:
 
 
 def _section_order(requested) -> list[str]:
-    """Requested order first, then any known section it left out, so none is dropped."""
+    """Requested order first, then any known section it left out, so none is dropped.
+
+    A summary the source did not have (the writer may add one) goes first, not last.
+    """
     order = [s for s in (requested or []) if s in KNOWN_SECTIONS]
     order = list(dict.fromkeys(order))
+    if 'summary' not in order:
+        order.insert(0, 'summary')
     return order + [s for s in DEFAULT_SECTION_ORDER if s not in order]
 
 

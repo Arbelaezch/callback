@@ -194,6 +194,39 @@ export default function ResumeEditor({ content, onChange }) {
           </>
         )}
       />
+
+      <EntryList
+        title="Other sections"
+        items={content.additional_sections}
+        onChange={(additional_sections) => set({ additional_sections })}
+        blank={{ title: '', entries: [{ heading: '', detail: '', dates: '', bullets: [''] }] }}
+        renderItem={(section, update) => (
+          <>
+            <TextField label="Section title" value={section.title} onChange={(v) => update({ title: v })} />
+            <EntryList
+              title="Entries"
+              items={section.entries}
+              onChange={(entries) => update({ entries })}
+              blank={{ heading: '', detail: '', dates: '', bullets: [''] }}
+              renderItem={(entry, updateEntry) => (
+                <>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <TextField label="Heading" value={entry.heading} onChange={(v) => updateEntry({ heading: v })} />
+                    <TextField label="Detail" value={entry.detail} onChange={(v) => updateEntry({ detail: v })} />
+                    <TextField label="Dates" value={entry.dates} onChange={(v) => updateEntry({ dates: v })} />
+                  </div>
+                  <LinesField
+                    label="Bullets"
+                    hint="One per line."
+                    value={entry.bullets}
+                    onChange={(v) => updateEntry({ bullets: v })}
+                  />
+                </>
+              )}
+            />
+          </>
+        )}
+      />
     </div>
   );
 }

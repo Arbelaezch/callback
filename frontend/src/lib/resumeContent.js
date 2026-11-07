@@ -2,7 +2,7 @@
 // Shape: header{name,headline,email,phone,location,links[]}, summary,
 // experience[{company,title,location,start,end,bullets[]}],
 // projects[{name,link,bullets[]}], education[{school,degree,start,end,details[]}],
-// skills[{category,items[]}].
+// skills[{category,items[]}], additional_sections[{title,entries[{heading,detail,dates,bullets[]}]}].
 
 function nonBlank(list) {
   return (list || []).map((s) => s.trim()).filter(Boolean);
@@ -19,7 +19,7 @@ export function cleanResume(content) {
       .map((item) => ({ ...item, [listKey]: nonBlank(item[listKey]) }))
       .filter((item) => (item[requiredKey] || '').trim() || item[listKey].length > 0);
 
-  return {
+  const cleaned = {
     ...content,
     header: { ...header, links: nonBlank(header.links) },
     experience: withLines(content.experience, 'bullets', 'company'),
@@ -29,6 +29,17 @@ export function cleanResume(content) {
       .map((group) => ({ ...group, items: nonBlank(group.items) }))
       .filter((group) => group.items.length > 0),
   };
+
+  // Only touch additional_sections when present so older documents round-trip unchanged.
+  if (Array.isArray(content.additional_sections)) {
+    cleaned.additional_sections = content.additional_sections
+      .map((section) => ({
+        ...section,
+        entries: withLines(section.entries, 'bullets', 'heading'),
+      }))
+      .filter((section) => section.entries.length > 0);
+  }
+  return cleaned;
 }
 
 export function moveItem(list, index, direction) {

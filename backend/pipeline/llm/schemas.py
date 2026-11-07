@@ -6,9 +6,15 @@ analysis extracts, what the writer tailors, and what the PDF template renders.
 Sections outside the five fixed ones (certifications, awards, languages and so
 on) go in the optional `additional_sections` list, so nothing has to be dropped.
 
-RESUME_LAYOUT_SCHEMA describes the formatting. `source_sections` lists every
+RESUME_LAYOUT_SCHEMA describes the formatting. SOURCE_SECTIONS_SCHEMA lists every
 heading printed on the source and where its content was put, so section titles
 can be re-used and anything left unplaced can be reported.
+
+Resume analysis is two calls against the same PDF: RESUME_CONTENT_ANALYSIS_SCHEMA
+(content plus source_sections, so the call that places the content also reports
+where each heading went) and RESUME_LAYOUT_SCHEMA. One combined schema is
+rejected by the structured-output API ("The compiled grammar is too large"):
+the strict-schema grammar has a size limit, so keep each sent schema small.
 """
 
 _STR = {'type': 'string'}
@@ -134,26 +140,6 @@ RESUME_LAYOUT_SCHEMA = {
                 'enum': ['summary', 'experience', 'projects', 'education', 'skills', 'additional'],
             },
         },
-        'source_sections': {
-            'type': 'array',
-            'description': (
-                'Every section heading printed on the resume, in reading order (main column '
-                'first, then sidebar), and the content field its text was put in.'
-            ),
-            'items': {
-                'type': 'object',
-                'properties': {
-                    'title': _STR,
-                    'placed_in': {
-                        'type': 'string',
-                        'enum': [
-                            'header', 'summary', 'experience', 'projects', 'education', 'skills', 'additional',
-                        ],
-                    },
-                },
-                'required': ['title', 'placed_in'],
-            },
-        },
         'section_title_style': {
             'type': 'string',
             'enum': ['uppercase', 'small_caps', 'title_case'],
@@ -170,13 +156,34 @@ RESUME_LAYOUT_SCHEMA = {
     'required': ['page_size', 'font_family', 'base_font_size_pt', 'section_order'],
 }
 
-RESUME_ANALYSIS_SCHEMA = {
+SOURCE_SECTIONS_SCHEMA = {
+    'type': 'array',
+    'description': (
+        'Every section heading printed on the resume, in reading order (main column '
+        'first, then sidebar), and the content field its text was put in.'
+    ),
+    'items': {
+        'type': 'object',
+        'properties': {
+            'title': _STR,
+            'placed_in': {
+                'type': 'string',
+                'enum': [
+                    'header', 'summary', 'experience', 'projects', 'education', 'skills', 'additional',
+                ],
+            },
+        },
+        'required': ['title', 'placed_in'],
+    },
+}
+
+RESUME_CONTENT_ANALYSIS_SCHEMA = {
     'type': 'object',
     'properties': {
         'content': RESUME_CONTENT_SCHEMA,
-        'layout': RESUME_LAYOUT_SCHEMA,
+        'source_sections': SOURCE_SECTIONS_SCHEMA,
     },
-    'required': ['content', 'layout'],
+    'required': ['content', 'source_sections'],
 }
 
 

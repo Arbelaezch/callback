@@ -28,6 +28,8 @@ LLM_MODEL_WRITER = 'claude-sonnet-5-5'
 LLM_MODEL_VERIFIER = 'claude-haiku-4-5-20251001'
 LLM_MODEL_TEXT_EXTRACTION = 'claude-haiku-4-5-20251001'  # transcribing a short letter needs no strong model
 LLM_MAX_TOKENS_WRITER = 8192
+# Resume layout call: the layout spec is small (no transcribed content), so it needs far less than the writer
+LLM_MAX_TOKENS_RESUME_LAYOUT = 2048
 LLM_MAX_TOKENS_SCOUT = 2048
 LLM_TIMEOUT_SECONDS_LONG = 120  # PDF analysis and document writing
 # Cover letter sample extraction runs inside the upload request, so keep it under the 30s Next.js proxy limit

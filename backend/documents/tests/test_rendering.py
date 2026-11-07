@@ -53,7 +53,7 @@ class ResolveLayoutTests(SimpleTestCase):
 
     def test_section_order_keeps_every_section(self):
         order = resolve_layout({'section_order': ['skills', 'bogus', 'skills', 'experience']})['section_order']
-        self.assertEqual(order[:2], ['skills', 'experience'])
+        self.assertEqual(order[1:3], ['skills', 'experience'])
         self.assertEqual(
             sorted(order), sorted(['summary', 'experience', 'projects', 'education', 'skills', 'additional']),
         )
@@ -68,8 +68,14 @@ class ResolveLayoutTests(SimpleTestCase):
         order = resolve_layout({'section_order': ['experience', 'skills']})['section_order']
         self.assertEqual(order[-1], 'additional')
         order = resolve_layout({'section_order': ['additional', 'experience']})['section_order']
-        self.assertEqual(order[0], 'additional')
+        self.assertEqual(order[1], 'additional')
         self.assertEqual(order.count('additional'), 1)
+
+    def test_summary_missing_from_order_goes_first(self):
+        order = resolve_layout({'section_order': ['experience', 'education']})['section_order']
+        self.assertEqual(order[0], 'summary')
+        order = resolve_layout({'section_order': ['experience', 'summary']})['section_order']
+        self.assertEqual(order[:2], ['experience', 'summary'])
 
     def test_section_titles_from_source_sections(self):
         titles = resolve_layout({'source_sections': [
