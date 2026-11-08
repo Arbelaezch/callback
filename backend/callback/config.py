@@ -86,6 +86,10 @@ REFRESH_ROTATION_GRACE_SECONDS = 30
 # Change TIME_ZONE in settings.py to shift all scheduled tasks together.
 CELERY_TIMEZONE = 'UTC'
 
+# Stored task results expire after this many seconds. Nothing reads them
+# (the app polls DB rows); Redis drops them by key TTL, so no cleanup task.
+CELERY_RESULT_EXPIRES = 60 * 60  # 1 hour
+
 
 # -----------------------------------------------------------------
 # Background task timeouts
