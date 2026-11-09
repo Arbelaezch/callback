@@ -103,7 +103,7 @@ export default function RegisterPage() {
           </div>
 
           {/* EMAIL VERIFICATION SCAFFOLD:
-          After register success, redirect to /verify-email instead of /onboarding */}
+          After register success, redirect to /verify-email instead of /profile */}
 
           {error && <p className="text-sm text-destructive">{error}</p>}
 
