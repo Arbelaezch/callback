@@ -228,6 +228,7 @@ JWT via `djangorestframework-simplejwt`. Tokens in httpOnly cookies, never local
 
 - `access_token` cookie: 15 min. `refresh_token` cookie: 7 days, blacklisted on logout (not rotated on refresh yet). A failed refresh and logout both clear the auth cookies.
 - `CookieJWTAuthentication` in `users/authentication.py` reads the cookie, falls back to the Authorization header.
+- CSRF defence (`users/csrf.py`): unsafe (non-GET/HEAD/OPTIONS) requests authenticated by the cookie, and every POST to register/login/logout/refresh, must carry an `Origin` (or, if Origin is absent, a `Referer`) whose origin is in `CORS_ALLOWED_ORIGINS`; otherwise 403 `{detail}`. Requests authenticated only by the `Authorization` header are exempt. Production `CORS_ALLOWED_ORIGINS` must list the exact frontend origin (scheme, host, port), or every write fails.
 - All endpoints require `IsAuthenticated` unless explicitly `AllowAny`. Every `documents` view scopes its querysets to `request.user`.
 - `secure=not DEBUG` on cookies.
 - Token refresh is handled silently in `apiClient.js` (on 401, `POST /api/auth/token/refresh/`, retry once).
@@ -252,7 +253,7 @@ JWT via `djangorestframework-simplejwt`. Tokens in httpOnly cookies, never local
 ### Auth: `/api/auth/`
 | Method | Path | Description |
 |---|---|---|
-| POST | `/register/`, `/login/`, `/logout/`, `/token/refresh/` | Auth. Login (10/min per IP) and register (5/hour per IP) are throttled: 429 `{detail}` plus `Retry-After`. Refresh and logout are not |
+| POST | `/register/`, `/login/`, `/logout/`, `/token/refresh/` | Auth. Login (10/min per IP) and register (5/hour per IP) are throttled: 429 `{detail}` plus `Retry-After`. Refresh and logout are not. All four return 403 `{detail}` on a cross-site or missing Origin/Referer |
 | GET | `/me/` | Current user |
 
 ### Users: `/api/users/`

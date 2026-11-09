@@ -271,9 +271,15 @@ class ResumeDetailTests(APITestCase):
         response = self.client.get('/api/users/upload-limits/')
         self.assertEqual(response.status_code, 401)
 
+ALLOWED_ORIGIN = 'http://localhost:3000'
+EVIL_ORIGIN = 'https://evil.example'
+
+
+@override_settings(CORS_ALLOWED_ORIGINS=[ALLOWED_ORIGIN])
 class AuthCookieTests(APITestCase):
     def setUp(self):
         cache.clear()
+        self.client.defaults['HTTP_ORIGIN'] = ALLOWED_ORIGIN
         self.user = get_user_model().objects.create_user('grace', password='x')
 
     def _assert_cleared(self, response):
@@ -390,10 +396,11 @@ NO_PROXY = {**settings.REST_FRAMEWORK, 'NUM_PROXIES': 0}
 ONE_PROXY = {**settings.REST_FRAMEWORK, 'NUM_PROXIES': 1}
 
 
-@override_settings(REST_FRAMEWORK=NO_PROXY)
+@override_settings(REST_FRAMEWORK=NO_PROXY, CORS_ALLOWED_ORIGINS=[ALLOWED_ORIGIN])
 class AuthThrottleTests(APITestCase):
     def setUp(self):
         cache.clear()
+        self.client.defaults['HTTP_ORIGIN'] = ALLOWED_ORIGIN
         get_user_model().objects.create_user('linus', password='right')
 
     def _login(self, password='wrong', **extra):
@@ -448,3 +455,115 @@ class AuthThrottleTests(APITestCase):
     def test_refresh_never_throttled(self):
         for _ in range(15):
             self.assertEqual(self.client.post('/api/auth/token/refresh/').status_code, 401)
+
+
+@override_settings(REST_FRAMEWORK=NO_PROXY, CORS_ALLOWED_ORIGINS=[ALLOWED_ORIGIN])
+class OriginCheckTests(APITestCase):
+    def setUp(self):
+        cache.clear()
+        self.user = get_user_model().objects.create_user('ada', password='right')
+
+    def _assert_rejected(self, response):
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data['detail'], 'Cross-site request rejected.')
+        self.assertNotIn('access_token', response.cookies)
+        self.assertNotIn('refresh_token', response.cookies)
+
+    def _login(self, password='right', **extra):
+        return self.client.post(
+            '/api/auth/login/', {'username': 'ada', 'password': password}, **extra
+        )
+
+    def _upload(self, **extra):
+        return self.client.post(
+            '/api/users/resumes/',
+            {'resume': SimpleUploadedFile('resume.txt', b'%PDF-1.4')},
+            format='multipart',
+            **extra,
+        )
+
+    def _set_access_cookie(self):
+        self.client.cookies['access_token'] = str(RefreshToken.for_user(self.user).access_token)
+
+    def test_logout_without_origin_or_referer_rejected(self):
+        token = str(RefreshToken.for_user(self.user))
+        self.client.cookies['refresh_token'] = token
+        response = self.client.post('/api/auth/logout/')
+        self._assert_rejected(response)
+        RefreshToken(token)  # not blacklisted
+
+    def test_logout_from_foreign_origin_rejected(self):
+        self._assert_rejected(self.client.post('/api/auth/logout/', HTTP_ORIGIN=EVIL_ORIGIN))
+        self._assert_rejected(self.client.post('/api/auth/logout/', HTTP_ORIGIN='null'))
+
+    def test_logout_from_allowed_origin_succeeds(self):
+        response = self.client.post('/api/auth/logout/', HTTP_ORIGIN=ALLOWED_ORIGIN)
+        self.assertEqual(response.status_code, 200)
+
+    def test_login_from_foreign_origin_rejected_without_cookies(self):
+        self._assert_rejected(self._login(HTTP_ORIGIN=EVIL_ORIGIN))
+
+    def test_login_with_allowed_referer_and_no_origin_succeeds(self):
+        response = self._login(HTTP_REFERER='http://localhost:3000/login')
+        self.assertEqual(response.status_code, 200)
+
+    def test_login_with_foreign_referer_rejected(self):
+        self._assert_rejected(self._login(HTTP_REFERER='https://evil.example/x'))
+        self._assert_rejected(self._login(HTTP_REFERER='not a url'))
+
+    def test_wrong_port_or_host_rejected(self):
+        self._assert_rejected(self._login(HTTP_ORIGIN='http://localhost:3001'))
+        self._assert_rejected(self._login(HTTP_ORIGIN='http://127.0.0.1:3000'))
+
+    def test_origin_takes_precedence_over_referer(self):
+        response = self._login(
+            HTTP_ORIGIN=ALLOWED_ORIGIN, HTTP_REFERER='https://evil.example/x'
+        )
+        self.assertEqual(response.status_code, 200)
+
+    def test_rejected_logins_do_not_consume_throttle(self):
+        for _ in range(11):
+            self.assertEqual(self._login('wrong', HTTP_ORIGIN=EVIL_ORIGIN).status_code, 403)
+        self.assertEqual(self._login(HTTP_ORIGIN=ALLOWED_ORIGIN).status_code, 200)
+
+    def test_register_from_foreign_origin_rejected(self):
+        response = self.client.post(
+            '/api/auth/register/',
+            {'username': 'newuser', 'email': 'newuser@example.com', 'password': 'Str0ngPass!word'},
+            HTTP_ORIGIN=EVIL_ORIGIN,
+        )
+        self._assert_rejected(response)
+        self.assertFalse(get_user_model().objects.filter(username='newuser').exists())
+
+    def test_refresh_from_foreign_origin_rejected(self):
+        token = str(RefreshToken.for_user(self.user))
+        self.client.cookies['refresh_token'] = token
+        response = self.client.post('/api/auth/token/refresh/', HTTP_ORIGIN=EVIL_ORIGIN)
+        self._assert_rejected(response)
+        RefreshToken(token)  # still valid, not rotated
+
+    def test_cookie_authenticated_write_from_foreign_origin_rejected(self):
+        self._set_access_cookie()
+        self._assert_rejected(self._upload(HTTP_ORIGIN=EVIL_ORIGIN))
+        self.assertFalse(Resume.objects.exists())
+
+    def test_cookie_authenticated_write_from_allowed_origin_passes(self):
+        self._set_access_cookie()
+        self.assertEqual(self._upload(HTTP_ORIGIN=ALLOWED_ORIGIN).status_code, 400)
+
+    def test_cookie_authenticated_write_without_headers_rejected(self):
+        self._set_access_cookie()
+        self._assert_rejected(self._upload())
+        self.assertFalse(Resume.objects.exists())
+
+    def test_cookie_authenticated_get_not_checked(self):
+        self._set_access_cookie()
+        response = self.client.get('/api/auth/me/', HTTP_ORIGIN=EVIL_ORIGIN)
+        self.assertEqual(response.status_code, 200)
+
+    def test_header_authenticated_write_not_checked(self):
+        access = str(RefreshToken.for_user(self.user).access_token)
+        response = self._upload(
+            HTTP_AUTHORIZATION=f'Bearer {access}', HTTP_ORIGIN=EVIL_ORIGIN
+        )
+        self.assertEqual(response.status_code, 400)
