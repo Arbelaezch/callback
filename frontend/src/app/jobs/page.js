@@ -4,11 +4,19 @@ import Link from 'next/link';
 import { useApiResource } from '@/hooks/useApiResource';
 import { primaryButtonClass } from '@/components/ui/styles';
 
+const KINDS = ['resume', 'cover_letter'];
+
+// Documents come newest first; the newest of each kind is the current version.
+function latestOfKind(documents, kind) {
+  return documents.find((d) => d.kind === kind);
+}
+
 function statusLabel(job) {
   const docs = job.documents || [];
   if (docs.length === 0) return 'Not generated';
-  if (docs.some((d) => d.status === 'pending')) return 'Generating…';
-  if (docs.some((d) => d.status === 'ready')) return 'Ready';
+  const latest = KINDS.map((kind) => latestOfKind(docs, kind));
+  if (latest.some((d) => d?.status === 'pending')) return 'Generating…';
+  if (latest.every((d) => d?.status === 'ready')) return 'Ready';
   return 'Failed';
 }
 
