@@ -3,8 +3,11 @@ from unittest.mock import patch
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 
-from documents.models import ParsedResume
-from documents.services import ingest_cover_letter_sample, parse_resume
+from documents.models import ContextSource, ParsedResume
+from documents.services import (
+    PARSE_FAILED_ERROR, SOURCE_FAILED_ERROR, SOURCE_NO_TEXT_ERROR, SOURCE_NOT_UTF8_ERROR,
+    index_upload_source, ingest_cover_letter_sample, parse_resume,
+)
 from users.models import CoverLetterSample, Resume
 
 ANALYSIS = {
@@ -43,20 +46,28 @@ class ParseResumeTests(TestCase):
 
     def test_rejects_resume_that_is_not_ready(self):
         resume = self._resume(status='pending')
-        with self.assertRaises(ValueError):
+        with self.assertRaises(ValueError), self.assertLogs('documents.services', level='ERROR'):
             parse_resume(resume)
         resume.refresh_from_db()
         self.assertEqual(resume.parse_status, 'failed')
+
+    def test_parse_not_ready_stores_friendly_error(self):
+        resume = self._resume(status='pending')
+        with self.assertRaises(ValueError), self.assertLogs('documents.services', level='ERROR'):
+            parse_resume(resume)
+        resume.refresh_from_db()
+        self.assertEqual(resume.parse_error, PARSE_FAILED_ERROR)
+        self.assertNotIn('not ready', resume.parse_error)
 
     @patch('documents.services.read_file', return_value=b'%PDF')
     @patch('documents.services.analyze_resume', side_effect=RuntimeError('model said no'))
     def test_parse_failure_marks_resume_failed(self, analyze, read):
         resume = self._resume()
-        with self.assertRaises(RuntimeError):
+        with self.assertRaises(RuntimeError), self.assertLogs('documents.services', level='ERROR'):
             parse_resume(resume)
         resume.refresh_from_db()
         self.assertEqual(resume.parse_status, 'failed')
-        self.assertEqual(resume.parse_error, 'model said no')
+        self.assertEqual(resume.parse_error, PARSE_FAILED_ERROR)
         self.assertFalse(ParsedResume.objects.filter(resume=resume).exists())
 
     @patch('documents.services.read_file', return_value=b'%PDF')
@@ -201,3 +212,43 @@ class CoverLetterIngestTests(TestCase):
         with self.assertRaises(OSError):
             ingest_cover_letter_sample(sample)
         self._assert_failed(sample, '')
+
+
+class IndexUploadSourceTests(TestCase):
+    def setUp(self):
+        user = get_user_model().objects.create_user('ada', password='x')
+        self.source = ContextSource.objects.create(
+            user=user, kind='upload', label='notes.md', s3_key='k',
+        )
+
+    def _error(self):
+        self.source.refresh_from_db()
+        self.assertEqual(self.source.status, 'failed')
+        return self.source.error
+
+    def test_read_failure_stores_friendly_error_and_logs(self):
+        with patch('documents.services.read_file', side_effect=OSError('bucket secret detail')):
+            with self.assertRaises(OSError), self.assertLogs('documents.services', level='ERROR'):
+                index_upload_source(self.source)
+        error = self._error()
+        self.assertEqual(error, SOURCE_FAILED_ERROR)
+        self.assertNotIn('bucket', error)
+
+    @patch('documents.services.read_file', return_value=b'\xff\xfe\x00bad')
+    def test_non_utf8_stores_utf8_message(self, read):
+        with self.assertRaises(ValueError):
+            index_upload_source(self.source)
+        self.assertEqual(self._error(), SOURCE_NOT_UTF8_ERROR)
+
+    @patch('documents.services.read_file', return_value=b'   ')
+    def test_empty_document_stores_no_text_message(self, read):
+        with self.assertRaises(ValueError):
+            index_upload_source(self.source)
+        self.assertEqual(self._error(), SOURCE_NO_TEXT_ERROR)
+
+    @patch('documents.services.read_file', return_value=b'hello')
+    def test_unexpected_value_error_is_not_shown(self, read):
+        with patch('documents.services.split_sections', side_effect=ValueError('internal detail')):
+            with self.assertRaises(ValueError), self.assertLogs('documents.services', level='ERROR'):
+                index_upload_source(self.source)
+        self.assertEqual(self._error(), SOURCE_FAILED_ERROR)
