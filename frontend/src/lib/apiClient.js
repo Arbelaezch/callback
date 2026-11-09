@@ -17,6 +17,9 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL;
  * code 'token_rotated' (and keeps the cookies another tab just set); the
  * original request is then retried once.
  *
+ * The refresh fetch is aborted after REFRESH_TIMEOUT_MS so a stalled request
+ * cannot hold the lock; a timed-out refresh is treated as an expired session.
+ *
  * SOCIAL AUTH SCAFFOLD:
  * When adding social providers, pass provider tokens through this
  * same wrapper to /api/auth/social/ — no changes needed here.
@@ -35,12 +38,19 @@ const REFRESH_LOCK = 'callback-auth-refresh';
 // Set-Cookie has time to land.
 const ROTATED_RETRY_DELAY_MS = 250;
 
+// Abort a refresh that stalls so it releases the cross-tab lock. Must stay
+// well below REFRESH_ROTATION_GRACE_SECONDS in backend/callback/config.py
+// (30 s), because an aborted refresh may still have rotated the token on the
+// server.
+const REFRESH_TIMEOUT_MS = 10 * 1000;
+
 let refreshPromise = null;
 
-function postRefresh() {
+function postRefresh(signal) {
   return fetch(`${API_URL}/api/auth/token/refresh/`, {
     method: 'POST',
     credentials: 'include',
+    signal,
   });
 }
 
@@ -49,12 +59,22 @@ function postRefresh() {
 function refreshToken() {
   if (refreshPromise) return refreshPromise;
 
-  const run = () =>
-    postRefresh().then(async (res) => {
-      if (res.ok) return { ok: true, rotated: false };
-      const body = await res.json().catch(() => ({}));
-      return { ok: false, rotated: body.code === 'token_rotated' };
-    });
+  const run = () => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), REFRESH_TIMEOUT_MS);
+    return postRefresh(controller.signal)
+      .then(async (res) => {
+        if (res.ok) return { ok: true, rotated: false };
+        const body = await res.json().catch(() => ({}));
+        return { ok: false, rotated: body.code === 'token_rotated' };
+      })
+      .catch((err) => {
+        // Timed out: fail like any other refresh so request() throws "Session expired."
+        if (err?.name === 'AbortError') return { ok: false, rotated: false };
+        throw err;
+      })
+      .finally(() => clearTimeout(timer));
+  };
 
   const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined;
 
