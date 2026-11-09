@@ -21,6 +21,8 @@ from .search import search_sections
 
 logger = logging.getLogger(__name__)
 
+GENERATION_FAILED_ERROR = 'Something went wrong while writing your documents.'
+
 SNIPPET_CHARS = 300
 VOICE_SECTIONS = 10
 
@@ -136,10 +138,10 @@ def generate_documents(resume_doc, letter_doc, parsed_resume, cover_letter_sampl
             job,
             parsed_resume.content, brief, written['resume'], written['cover_letter_markdown'],
         )
-    except Exception as exc:
+    except Exception:
         for doc in (resume_doc, letter_doc):
             doc.status = 'failed'
-            doc.error = str(exc)
+            doc.error = GENERATION_FAILED_ERROR
             doc.save(update_fields=['status', 'error'])
         logger.exception('Document generation failed for job posting %s', job_posting.pk)
         raise

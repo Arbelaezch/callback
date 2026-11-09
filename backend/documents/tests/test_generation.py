@@ -3,7 +3,9 @@ from unittest.mock import patch
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 
-from documents.generation import create_pending_documents, generate_documents
+from documents.generation import (
+    GENERATION_FAILED_ERROR, create_pending_documents, generate_documents,
+)
 from documents.models import GeneratedDocument
 from documents.tasks import generate_documents_task
 from documents.models import ContextSource, JobPosting, ParsedResume, VoiceProfile
@@ -82,12 +84,15 @@ class GenerateDocumentsTests(TestCase):
 
     def test_stage_failure_marks_documents_failed(self):
         with patch('documents.generation.run_scout', side_effect=RuntimeError('api down')):
-            with self.assertRaises(RuntimeError):
+            with self.assertRaises(RuntimeError), \
+                 self.assertLogs('documents.generation', level='ERROR'):
                 resume_doc, letter_doc = create_pending_documents(self.job, self.parsed.resume)
                 generate_documents(resume_doc, letter_doc, self.parsed)
         statuses = set(self.job.documents.values_list('status', flat=True))
         self.assertEqual(statuses, {'failed'})
-        self.assertEqual(self.job.documents.first().error, 'api down')
+        errors = set(self.job.documents.values_list('error', flat=True))
+        self.assertEqual(errors, {GENERATION_FAILED_ERROR})
+        self.assertFalse(any('api down' in e for e in errors))
 
 
 class GenerateDocumentsTaskTests(TestCase):

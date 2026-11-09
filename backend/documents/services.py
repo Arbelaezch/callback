@@ -15,6 +15,21 @@ from .sectioning import split_sections
 
 logger = logging.getLogger(__name__)
 
+PARSE_FAILED_ERROR = 'Could not read this resume. Please try again.'
+SOURCE_NO_TEXT_ERROR = 'Document has no text'
+SOURCE_NOT_UTF8_ERROR = 'Text file must be UTF-8.'
+SOURCE_FAILED_ERROR = 'Upload failed. Please try again.'
+
+
+class SourceRejected(ValueError):
+    """An upload the user must fix; its message is safe to show."""
+
+
+def _fail_source(source, error):
+    source.status = 'failed'
+    source.error = error
+    source.save(update_fields=['status', 'error'])
+
 
 def _set_parse_status(resume, parse_status, parse_error):
     # A queryset update, not resume.save(): the instance may be stale, and
@@ -32,8 +47,8 @@ def parse_resume(resume) -> ParsedResume:
     Re-running replaces the previous parse.
 
     Sets resume.parse_status to 'ready' on success. On any failure (including
-    a resume with no stored file yet) it is set to 'failed' with the error
-    recorded, and the exception is re-raised.
+    a resume with no stored file yet) it is set to 'failed' with a friendly
+    error recorded and the details logged, and the exception is re-raised.
     """
     try:
         if resume.status != 'ready':
@@ -49,8 +64,9 @@ def parse_resume(resume) -> ParsedResume:
             },
         )
         _set_parse_status(resume, 'ready', '')
-    except Exception as exc:
-        _set_parse_status(resume, 'failed', str(exc) or exc.__class__.__name__)
+    except Exception:
+        logger.exception('Resume parse failed for resume %s', resume.pk)
+        _set_parse_status(resume, 'failed', PARSE_FAILED_ERROR)
         raise
     logger.info('Parsed resume %s for user %s', resume.pk, resume.user_id)
     return parsed
@@ -60,13 +76,18 @@ def index_upload_source(source) -> int:
     """
     Read an uploaded ContextSource, replace its sections and mark it ready.
     Returns the number of sections. On failure the source is marked failed
-    with the error recorded, and the exception is re-raised.
+    with a friendly error (specific only for no text or non-UTF-8 files),
+    the details are logged, and the exception is re-raised.
     """
     try:
-        text = read_file(source.s3_key).decode('utf-8')
+        data = read_file(source.s3_key)
+        try:
+            text = data.decode('utf-8')
+        except UnicodeDecodeError:
+            raise SourceRejected(SOURCE_NOT_UTF8_ERROR) from None
         sections = split_sections(text)
         if not sections:
-            raise ValueError('Document has no text')
+            raise SourceRejected(SOURCE_NO_TEXT_ERROR)
 
         with transaction.atomic():
             source.sections.all().delete()
@@ -81,10 +102,13 @@ def index_upload_source(source) -> int:
             source.error = ''
             source.last_synced_at = timezone.now()
             source.save(update_fields=['status', 'error', 'last_synced_at'])
-    except Exception as exc:
-        source.status = 'failed'
-        source.error = str(exc)
-        source.save(update_fields=['status', 'error'])
+    except SourceRejected as exc:
+        logger.info('Context source %s rejected: %s', source.pk, exc)
+        _fail_source(source, str(exc))
+        raise
+    except Exception:
+        logger.exception('Indexing failed for context source %s', source.pk)
+        _fail_source(source, SOURCE_FAILED_ERROR)
         raise
 
     logger.info('Indexed source %s: %d sections', source.pk, len(sections))
