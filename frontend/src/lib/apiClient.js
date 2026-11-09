@@ -17,8 +17,8 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL;
  * code 'token_rotated' (and keeps the cookies another tab just set); the
  * original request is then retried once.
  *
- * The refresh fetch is aborted after REFRESH_TIMEOUT_MS so a stalled request
- * cannot hold the lock; a timed-out refresh is treated as an expired session.
+ * The refresh is aborted after REFRESH_TIMEOUT_MS so a stalled request
+ * releases the lock, and a timed-out refresh is treated as an expired session.
  *
  * SOCIAL AUTH SCAFFOLD:
  * When adding social providers, pass provider tokens through this
@@ -38,10 +38,8 @@ const REFRESH_LOCK = 'callback-auth-refresh';
 // Set-Cookie has time to land.
 const ROTATED_RETRY_DELAY_MS = 250;
 
-// Abort a refresh that stalls so it releases the cross-tab lock. Must stay
-// well below REFRESH_ROTATION_GRACE_SECONDS in backend/callback/config.py
-// (30 s), because an aborted refresh may still have rotated the token on the
-// server.
+// Abort a refresh that stalls so it cannot hold the cross-tab lock and block
+// every other tab. Kept well under the backend's 30 s rotation grace window.
 const REFRESH_TIMEOUT_MS = 10 * 1000;
 
 let refreshPromise = null;
@@ -70,7 +68,7 @@ function refreshToken() {
       })
       .catch((err) => {
         // Timed out: fail like any other refresh so request() throws "Session expired."
-        if (err?.name === 'AbortError') return { ok: false, rotated: false };
+        if (controller.signal.aborted) return { ok: false, rotated: false };
         throw err;
       })
       .finally(() => clearTimeout(timer));
