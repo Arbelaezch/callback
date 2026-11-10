@@ -15,7 +15,12 @@ Resume analysis is two calls against the same PDF: RESUME_CONTENT_ANALYSIS_SCHEM
 where each heading went) and RESUME_LAYOUT_SCHEMA. One combined schema is
 rejected by the structured-output API ("The compiled grammar is too large"):
 the strict-schema grammar has a size limit, so keep each sent schema small.
+
+RESUME_LAYOUT_SCHEMA also reports decorative_elements (a fixed enum of kinds the
+source prints, such as icons or charts) so the app can tell the user they are left out.
 """
+
+from callback.config import DECORATIVE_ELEMENT_KINDS
 
 _STR = {'type': 'string'}
 _STR_LIST = {'type': 'array', 'items': _STR}
@@ -153,6 +158,11 @@ RESUME_LAYOUT_SCHEMA = {
             'type': 'integer',
             'enum': [1, 2],
             'description': '2 if the resume uses two columns or a sidebar, else 1',
+        },
+        'decorative_elements': {
+            'type': 'array',
+            'description': 'Decorative elements printed on the resume (left out when re-rendered); empty if none',
+            'items': {'type': 'string', 'enum': list(DECORATIVE_ELEMENT_KINDS)},
         },
     },
     'required': ['page_size', 'font_family', 'base_font_size_pt', 'section_order'],

@@ -3,6 +3,8 @@
 Pure functions, no DB access. Input comes from model output, so every access is
 tolerant of missing or malformed data.
 """
+from callback.config import DECORATIVE_ELEMENT_KINDS
+
 from .rendering import KNOWN_SECTIONS
 
 FIXED_SECTIONS = [s for s in KNOWN_SECTIONS if s != 'additional']
@@ -11,6 +13,13 @@ COLUMNS_MESSAGE = (
     'Your original resume uses two columns or a sidebar. We lay it out in a single column, '
     'so it will look simpler than the original.'
 )
+
+DECORATIVE_LABELS = {
+    'icons': 'icons',
+    'charts': 'charts',
+    'skill_ratings': 'skill rating bars or dots',
+    'skill_pills': 'skill pills',
+}
 
 
 def _norm(text):
@@ -41,6 +50,19 @@ def layout_notices(content, layout):
 
     if layout.get('columns') == 2:
         notices.append({'code': 'columns_simplified', 'message': COLUMNS_MESSAGE, 'sections': []})
+
+    decorative = layout.get('decorative_elements')
+    if isinstance(decorative, list):
+        labels = [DECORATIVE_LABELS[k] for k in DECORATIVE_ELEMENT_KINDS if k in decorative]
+        if labels:
+            notices.append({
+                'code': 'decorative_dropped',
+                'message': (
+                    f'Your original resume has decorative elements ({", ".join(labels)}). '
+                    'They are not carried over, so this version will look simpler than the original.'
+                ),
+                'sections': [],
+            })
 
     source_sections = layout.get('source_sections')
     if not isinstance(source_sections, list):

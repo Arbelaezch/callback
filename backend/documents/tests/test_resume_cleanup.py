@@ -69,3 +69,75 @@ class RobustnessTests(SimpleTestCase):
         self.assertIsNone(clean_resume_content(None))
         clean_resume_content({'experience': 'x', 'education': 'y'})
         clean_resume_content({'experience': [None, 3], 'education': [None, {'degree': 'x', 'details': 'z'}]})
+
+
+def _skills(*items):
+    return {'skills': [{'category': 'Tech', 'items': list(items)}]}
+
+
+class RatingGuardTests(SimpleTestCase):
+    def test_rating_values_dropped_from_skills(self):
+        stats = {}
+        out = clean_resume_content(_skills('Python', '80%', '4/5', '3', '4.5', '●●●○○'), stats)
+        self.assertEqual(out['skills'][0]['items'], ['Python'])
+        self.assertEqual(stats['skill_ratings_dropped'], 5)
+
+    def test_trailing_glyphs_stripped(self):
+        out = clean_resume_content(_skills('Python ●●●●○', 'Go ★★★'))
+        self.assertEqual(out['skills'][0]['items'], ['Python', 'Go'])
+
+    def test_real_skills_kept(self):
+        items = ['C++', '8051', '5G', '3D', 'Go', '365', '911', '101', '2/3', '100']
+        stats = {}
+        out = clean_resume_content(_skills(*items), stats)
+        self.assertEqual(out['skills'][0]['items'], items)
+        self.assertEqual(stats['skill_ratings_dropped'], 0)
+
+    def test_category_of_only_ratings_removed(self):
+        out = clean_resume_content(_skills('80%', '90%'))
+        self.assertEqual(out['skills'], [])
+
+    def test_numeric_facts_kept_in_additional_sections(self):
+        entries = [{'heading': '100', 'detail': 'Countries visited'}, {'heading': 'Awards', 'bullets': ['365']}]
+        content = {'additional_sections': [{'title': 'Facts', 'entries': entries}]}
+        stats = {}
+        out = clean_resume_content(content, stats)
+        self.assertEqual(out['additional_sections'][0]['entries'], entries)
+        self.assertEqual(stats['chart_values_dropped'], 0)
+
+    def test_kept_entry_with_numeric_heading_not_counted(self):
+        entry = {'heading': '30', 'detail': 'Sleep'}
+        stats = {}
+        clean_resume_content({'additional_sections': [{'title': 'A Day', 'entries': [entry]}]}, stats)
+        self.assertEqual(stats['chart_values_dropped'], 0)
+
+    def test_empty_category_kept(self):
+        out = clean_resume_content(_skills())
+        self.assertEqual(len(out['skills']), 1)
+
+    def test_chart_section_removed(self):
+        content = {'additional_sections': [{'title': 'A Day', 'entries': [
+            {'heading': '30'}, {'heading': '20', 'bullets': ['15%']},
+        ]}]}
+        stats = {}
+        out = clean_resume_content(content, stats)
+        self.assertEqual(out['additional_sections'], [])
+        self.assertEqual(stats['chart_values_dropped'], 3)
+
+    def test_real_entry_keeps_and_loses_numeric_bullet(self):
+        entry = {'heading': 'Spanish', 'detail': 'Native', 'bullets': ['90%']}
+        out = clean_resume_content({'additional_sections': [{'title': 'Languages', 'entries': [entry]}]})
+        kept = out['additional_sections'][0]['entries'][0]
+        self.assertEqual(kept['heading'], 'Spanish')
+        self.assertEqual(kept['bullets'], [])
+
+    def test_plain_empty_entry_not_dropped(self):
+        content = {'additional_sections': [{'title': 'X', 'entries': [{'heading': ''}]}]}
+        stats = {}
+        out = clean_resume_content(content, stats)
+        self.assertEqual(len(out['additional_sections'][0]['entries']), 1)
+        self.assertEqual(stats['chart_values_dropped'], 0)
+
+    def test_malformed_input_does_not_raise(self):
+        clean_resume_content({'skills': 'x', 'additional_sections': [None, {'entries': 'y'}]})
+        clean_resume_content({'skills': [None, {'items': 'z'}, {'items': [3, None]}]})

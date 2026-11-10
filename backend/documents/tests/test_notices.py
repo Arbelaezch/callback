@@ -1,6 +1,7 @@
 from django.test import SimpleTestCase
 
-from documents.notices import layout_notices
+from callback.config import DECORATIVE_ELEMENT_KINDS
+from documents.notices import DECORATIVE_LABELS, layout_notices
 
 
 def src(title, placed_in):
@@ -54,3 +55,35 @@ class LayoutNoticesTests(SimpleTestCase):
     def test_duplicate_titles_reported_once(self):
         layout = {'source_sections': [src('Awards', 'additional'), src('Awards', 'additional')]}
         self.assertEqual(layout_notices({}, layout)[0]['sections'], ['Awards'])
+
+
+class DecorativeNoticeTests(SimpleTestCase):
+    def test_decorative_notice(self):
+        notices = layout_notices({}, {'decorative_elements': ['icons', 'charts']})
+        self.assertEqual([n['code'] for n in notices], ['decorative_dropped'])
+        self.assertEqual(notices[0]['sections'], [])
+        self.assertIn('icons, charts', notices[0]['message'])
+
+    def test_labels_follow_config_order(self):
+        notices = layout_notices({}, {'decorative_elements': ['skill_pills', 'icons']})
+        self.assertIn('icons, skill pills', notices[0]['message'])
+
+    def test_unknown_and_malformed_values_give_no_notice(self):
+        for value in (['<b>x</b>', 5, None], 'icons', {'icons': True}, [], None):
+            self.assertEqual(layout_notices({}, {'decorative_elements': value}), [], value)
+
+    def test_unknown_values_never_reach_message(self):
+        notices = layout_notices({}, {'decorative_elements': ['icons', '<script>']})
+        self.assertNotIn('script', notices[0]['message'])
+
+    def test_notice_order(self):
+        layout = {
+            'columns': 2,
+            'decorative_elements': ['icons'],
+            'source_sections': [src('Awards', 'additional')],
+        }
+        codes = [n['code'] for n in layout_notices({}, layout)]
+        self.assertEqual(codes, ['columns_simplified', 'decorative_dropped', 'sections_unplaced'])
+
+    def test_every_kind_has_a_label(self):
+        self.assertEqual(set(DECORATIVE_LABELS), set(DECORATIVE_ELEMENT_KINDS))

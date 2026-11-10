@@ -4,6 +4,8 @@ import base64
 import logging
 
 from callback.config import (
+    DECORATIVE_ELEMENT_KINDS,
+    DECORATIVE_GUARD_MIN_DROPS,
     LLM_MAX_TOKENS_RESUME_LAYOUT,
     LLM_MAX_TOKENS_WRITER,
     LLM_MODEL_WRITER,
@@ -67,8 +69,21 @@ def analyze_resume(pdf_bytes: bytes) -> dict:
         'Analysed resume in two calls: %d experience entries, %d source headings',
         len(content.get('experience', [])), len(source_sections),
     )
+    reported = layout.get('decorative_elements')
+    reported = reported if isinstance(reported, list) else []
+    decorative = [
+        kind for kind in DECORATIVE_ELEMENT_KINDS
+        if kind in reported
+        or (kind == 'skill_ratings' and stats.get('skill_ratings_dropped', 0) >= DECORATIVE_GUARD_MIN_DROPS)
+        or (kind == 'charts' and stats.get('chart_values_dropped', 0) >= DECORATIVE_GUARD_MIN_DROPS)
+    ]
     logger.info(
-        'Resume cleanup: %d companies stripped of location, %d repeated degree details dropped',
+        'Resume cleanup: %d companies stripped of location, %d repeated degree details dropped, '
+        '%d skill ratings and %d chart values dropped, decorative elements: %s',
         stats.get('companies_stripped', 0), stats.get('details_dropped', 0),
+        stats.get('skill_ratings_dropped', 0), stats.get('chart_values_dropped', 0), decorative,
     )
-    return {'content': content, 'layout': {**layout, 'source_sections': source_sections}}
+    return {
+        'content': content,
+        'layout': {**layout, 'decorative_elements': decorative, 'source_sections': source_sections},
+    }

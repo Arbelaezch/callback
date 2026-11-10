@@ -28,8 +28,12 @@ RESUME_CONTENT_SYSTEM = (
     'For two-column or sidebar layouts, extract both columns fully, main '
     'column first, then the sidebar.\n'
     'Icons next to contact details: copy the text into the header fields and '
-    'ignore the glyph. Skill bars or ratings with no text: keep the skill name '
-    'only. Tables: read them row by row.'
+    'ignore the glyph. Skill bars, dots, stars or ratings: keep the skill name '
+    'only and never copy a rating as text (no dots, stars, numbers or '
+    'percentages after a skill). Charts and other graphics are left out: do '
+    'not copy their numbers or percentages into skills or additional_sections. '
+    'Text labels that state real facts (such as a language name) are kept. '
+    'Tables: read them row by row.'
 )
 
 RESUME_CONTENT_USER = 'Extract the content of this resume and list its section headings.'
@@ -49,6 +53,12 @@ RESUME_LAYOUT_SYSTEM = (
     'Set columns to 2 if the resume uses two columns or a sidebar, else 1.\n'
     'Report font_family as the actual typeface name (e.g. "Computer Modern", '
     '"Calibri"), not a generic family.\n'
+    'decorative_elements lists the decorative kinds the resume prints: icons '
+    'for icons or symbols beside contact details or headings; charts for pie, '
+    'wheel, bar or other charts (e.g. a "day of my life" chart); '
+    'skill_ratings for proficiency dots, bars, stars or percentages; '
+    'skill_pills for skills drawn as boxed tags or pills. Use an empty list '
+    'if there are none.\n'
     'Do not transcribe the content.'
 )
 
