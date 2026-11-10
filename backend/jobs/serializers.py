@@ -1,5 +1,7 @@
 from rest_framework import serializers
 
+from callback.config import APPLY_FAILURE_GENERIC, APPLY_FAILURE_REASONS
+
 from .models import Agent, Application, RunLog, Search
 
 
@@ -69,6 +71,7 @@ class SearchSerializer(serializers.ModelSerializer):
 
 class ApplicationSerializer(serializers.ModelSerializer):
     search_label = serializers.SerializerMethodField()
+    failure_reason = serializers.SerializerMethodField()
 
     class Meta:
         model = Application
@@ -95,6 +98,14 @@ class ApplicationSerializer(serializers.ModelSerializer):
 
     def get_search_label(self, obj):
         return obj.search.label or 'Search'
+
+    def get_failure_reason(self, obj):
+        # Only fixed messages are shown; legacy rows may hold raw text.
+        if not obj.failure_reason:
+            return None
+        if obj.failure_reason in APPLY_FAILURE_REASONS:
+            return obj.failure_reason
+        return APPLY_FAILURE_GENERIC
 
 
 class ChoiceSerializer(serializers.Serializer):

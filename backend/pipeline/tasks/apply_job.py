@@ -48,9 +48,9 @@ import logging
 from datetime import datetime, timezone
 
 import boto3
-from botocore.exceptions import BotoCoreError, ClientError
 from django.conf import settings
 
+from callback.config import APPLY_FAILURE_AGENT, APPLY_FAILURE_DISPATCH, APPLY_FAILURE_PREPARE
 from jobs.models import Application, RunLog, Search
 from users.models import Resume
 from pipeline.ats import detect_ats
@@ -214,11 +214,10 @@ def _apply_one(search: Search, job: dict, resume: Resume) -> bool:
     # Build payload — same shape regardless of dispatch method.
     try:
         payload = _build_lambda_payload(application, resume, cover_letter, ats)
-    except Exception as exc:
-        reason = f'Failed to build payload: {exc}'
+    except Exception:
         logger.exception('apply_one: payload build failed for job_id=%s', job['job_id'])
         application.status = 'failed'
-        application.failure_reason = reason
+        application.failure_reason = APPLY_FAILURE_PREPARE
         application.save(update_fields=['status', 'failure_reason'])
         return False
 
@@ -254,18 +253,14 @@ def _dispatch_lambda(
         )
         return True
 
-    except (BotoCoreError, ClientError) as exc:
-        reason = f'Lambda invoke failed: {exc}'
-    except RuntimeError as exc:
-        reason = str(exc)
-    except Exception as exc:
-        reason = f'Unexpected error: {exc}'
-        logger.exception('apply_one: unexpected Lambda error for job_id=%s search_id=%d', job_id, search_id)
+    except Exception:
+        logger.exception(
+            'apply_one: Lambda dispatch failed for job_id=%s search_id=%d', job_id, search_id,
+        )
 
     application.status = 'failed'
-    application.failure_reason = reason
+    application.failure_reason = APPLY_FAILURE_DISPATCH
     application.save(update_fields=['status', 'failure_reason'])
-    logger.error('apply_one: Lambda dispatch failed for job_id=%s: %s', job_id, reason)
     return False
 
 
@@ -292,7 +287,7 @@ def _dispatch_local(
             return True
         else:
             application.status = 'failed'
-            application.failure_reason = failure_reason
+            application.failure_reason = APPLY_FAILURE_AGENT
             application.save(update_fields=['status', 'failure_reason'])
             logger.warning(
                 'apply_one: local handler failed for job_id=%s: %s',
@@ -300,15 +295,13 @@ def _dispatch_local(
             )
             return False
 
-    except ImportError as exc:
-        reason = str(exc)
-        logger.error('apply_one: %s', reason)
-    except Exception as exc:
-        reason = f'Unexpected local handler error: {exc}'
-        logger.exception('apply_one: unexpected error for job_id=%s search_id=%d', job_id, search_id)
+    except Exception:
+        logger.exception(
+            'apply_one: local handler error for job_id=%s search_id=%d', job_id, search_id,
+        )
 
     application.status = 'failed'
-    application.failure_reason = reason
+    application.failure_reason = APPLY_FAILURE_DISPATCH
     application.save(update_fields=['status', 'failure_reason'])
     return False
 

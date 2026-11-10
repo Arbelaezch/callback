@@ -68,6 +68,20 @@ JSEARCH_TIMEOUT_SECONDS = 15
 JSEARCH_PAGE_SIZE = 10  # results per API call; JSearch max is 10
 
 # -----------------------------------------------------------------
+# Applications (V3 groundwork)
+# -----------------------------------------------------------------
+
+# Fixed, user-safe Application.failure_reason values. Exception text and
+# agent/Lambda-supplied text go to server logs only (#49).
+APPLY_FAILURE_PREPARE = 'Could not prepare the application.'
+APPLY_FAILURE_DISPATCH = 'Could not start the application agent.'
+APPLY_FAILURE_AGENT = 'The application agent could not complete this application.'
+APPLY_FAILURE_GENERIC = 'The application failed.'
+APPLY_FAILURE_REASONS = (
+    APPLY_FAILURE_PREPARE, APPLY_FAILURE_DISPATCH, APPLY_FAILURE_AGENT, APPLY_FAILURE_GENERIC,
+)
+
+# -----------------------------------------------------------------
 # Auth
 # -----------------------------------------------------------------
 
