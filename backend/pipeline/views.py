@@ -15,6 +15,7 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework import status
 
+from callback.config import APPLY_FAILURE_AGENT
 from jobs.models import Application
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,10 @@ class ApplicationCallbackView(APIView):
         "status":         "submitted" | "failed",
         "failure_reason": str | null
     }
+
+    "failure_reason" is accepted for server logs only. The stored (and
+    displayed) value on a failed application is the fixed message
+    APPLY_FAILURE_AGENT; agent/Lambda text is never persisted.
 
     Response
     --------
@@ -106,9 +111,15 @@ class ApplicationCallbackView(APIView):
             application.applied_at = datetime.now(tz=timezone.utc)
             update_fields.append('applied_at')
 
-        if failure_reason:
-            application.failure_reason = failure_reason[:2000]  # guard against oversized payloads
+        if incoming_status == 'failed':
+            application.failure_reason = APPLY_FAILURE_AGENT
             update_fields.append('failure_reason')
+            if failure_reason:
+                logger.warning(
+                    'ApplicationCallbackView: application_id=%d failed: %s',
+                    application_id,
+                    str(failure_reason)[:2000],
+                )
 
         application.save(update_fields=update_fields)
 
