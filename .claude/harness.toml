@@ -34,3 +34,9 @@ description = "Next.js (JavaScript) in frontend, Django (Python)"
 gates = [
   { name = "tests", kind = "django", cwd = "backend", cmd = "/Users/christianarbelaez/code/personal-projects/callback/backend/env/bin/python manage.py test --noinput" },
 ]
+
+[factory]
+allowed_tools = [
+  # Real LLM run for prompt checks (#35); spends API credits. Wrapper script because rules cannot cd or set env.
+  "Bash(scripts/check-tailoring.sh)",
+]

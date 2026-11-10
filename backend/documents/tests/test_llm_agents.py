@@ -188,3 +188,7 @@ class WriterPromptTests(SimpleTestCase):
         self.assertIn('No invented facts.', WRITER_SYSTEM)
         self.assertIn('Keep additional_sections and their titles', WRITER_SYSTEM)
         self.assertIn('never invent new ones', WRITER_SYSTEM)
+
+    def test_keeps_never_drop_section_and_links_rule(self):
+        self.assertIn('Never drop a whole section of the current resume', WRITER_SYSTEM)
+        self.assertIn('keep every link or profile the user listed', WRITER_SYSTEM)

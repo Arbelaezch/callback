@@ -361,6 +361,8 @@ cd backend && env/bin/python manage.py test --noinput
 
 Needs Postgres running (`docker compose up -d db`). LLM calls are mocked in the suite, so a green run does not prove prompts or schemas work. After changing anything in `pipeline/llm`, run the real path once with a throwaway resume PDF, a notes file and a pasted job description (`USE_S3=False`, never against S3), and delete the test user afterwards.
 
+`manage.py check_tailoring PDF... --job JOB_TXT --out DIR` re-runs sample resume PDFs through the real path (paid API, no database writes) and reports dropped sections, dropped links and summary placement in `DIR/report.json`. Keep `--out` under `docs/` (gitignored); the command refuses other paths inside the repo.
+
 Frontend: `cd frontend && npm run lint && npm run build`. For the browser flow, use Playwright against `npm run dev`; do not run `npm run build` while a dev server is running in the same folder (the shared `.next` directory makes the dev page reload forever).
 
 ---
