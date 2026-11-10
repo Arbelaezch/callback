@@ -418,6 +418,13 @@ class RenderEndpointTests(ApiTestCase):
         self.assertEqual(got.data['layout_notices'][0]['code'], 'columns_simplified')
         self.assertEqual(self.client.get(f'/api/documents/documents/{letter.pk}/').data['layout_notices'], [])
 
+    def test_document_detail_includes_decorative_notice(self):
+        doc = self._doc()
+        doc.layout = {'decorative_elements': ['charts']}
+        doc.save()
+        got = self.client.get(f'/api/documents/documents/{doc.pk}/')
+        self.assertIn('decorative_dropped', [n['code'] for n in got.data['layout_notices']])
+
     def test_export_reflects_user_edits(self):
         doc = self._doc()
         self.client.patch(f'/api/documents/documents/{doc.pk}/', {
