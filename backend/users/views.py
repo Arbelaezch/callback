@@ -19,6 +19,7 @@ from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken
 from django.conf import settings
 
 from callback.throttles import IPScopedRateThrottle, ReadableThrottleMixin
+from .csrf import OriginCheckMixin
 from .serializers import (
     RegisterSerializer,
     UserSerializer,
@@ -84,7 +85,7 @@ def _recently_rotated(raw_token):
     ).exists()
 
 
-class RegisterView(ReadableThrottleMixin, APIView):
+class RegisterView(OriginCheckMixin, ReadableThrottleMixin, APIView):
     permission_classes = [AllowAny]
     throttle_classes = [IPScopedRateThrottle]
     throttle_scope = 'register'
@@ -109,7 +110,7 @@ class RegisterView(ReadableThrottleMixin, APIView):
         return response
 
 
-class LoginView(ReadableThrottleMixin, APIView):
+class LoginView(OriginCheckMixin, ReadableThrottleMixin, APIView):
     permission_classes = [AllowAny]
     throttle_classes = [IPScopedRateThrottle]
     throttle_scope = 'login'
@@ -137,7 +138,7 @@ class LoginView(ReadableThrottleMixin, APIView):
         return response
 
 
-class LogoutView(APIView):
+class LogoutView(OriginCheckMixin, APIView):
     # Must work with an expired or stale access cookie, so it never authenticates.
     authentication_classes = []
     permission_classes = [AllowAny]
@@ -244,7 +245,7 @@ class OnboardingView(APIView):
         return Response({'detail': 'Onboarding complete.'}, status=status.HTTP_201_CREATED)
 
 
-class RefreshView(APIView):
+class RefreshView(OriginCheckMixin, APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
