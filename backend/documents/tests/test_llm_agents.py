@@ -151,11 +151,22 @@ class AnalyzeResumeTests(SimpleTestCase):
 
     @patch('pipeline.llm.resume_analysis.call_structured')
     def test_guard_drops_add_decorative_kind(self, mock_call):
-        content = {**self.CONTENT, 'skills': [{'category': 'Tech', 'items': ['Python', '80%']}]}
+        content = {**self.CONTENT, 'skills': [{'category': 'Tech', 'items': ['Python', '80%', '60%']}]}
         mock_call.side_effect = [{'content': content, 'source_sections': []}, dict(self.LAYOUT)]
         result = analyze_resume(self.PDF)
         self.assertEqual(result['layout']['decorative_elements'], ['skill_ratings'])
         self.assertEqual(result['content']['skills'][0]['items'], ['Python'])
+
+    @patch('pipeline.llm.resume_analysis.call_structured')
+    def test_single_stray_value_does_not_add_decorative_kind(self, mock_call):
+        entry = {'heading': 'Spanish', 'detail': 'Native', 'bullets': ['90%']}
+        content = {
+            **self.CONTENT,
+            'skills': [{'category': 'Tech', 'items': ['Python', 'Go ■']}],
+            'additional_sections': [{'title': 'Languages', 'entries': [entry]}],
+        }
+        mock_call.side_effect = [{'content': content, 'source_sections': []}, dict(self.LAYOUT)]
+        self.assertEqual(analyze_resume(self.PDF)['layout']['decorative_elements'], [])
 
     def test_decorative_prompt_phrases(self):
         self.assertIn('decorative_elements', RESUME_LAYOUT_SYSTEM)

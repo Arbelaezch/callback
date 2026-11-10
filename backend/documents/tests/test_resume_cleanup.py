@@ -87,7 +87,7 @@ class RatingGuardTests(SimpleTestCase):
         self.assertEqual(out['skills'][0]['items'], ['Python', 'Go'])
 
     def test_real_skills_kept(self):
-        items = ['C++', '8051', '5G', '3D', 'Go']
+        items = ['C++', '8051', '5G', '3D', 'Go', '365', '911', '101', '2/3', '100']
         stats = {}
         out = clean_resume_content(_skills(*items), stats)
         self.assertEqual(out['skills'][0]['items'], items)
@@ -96,6 +96,20 @@ class RatingGuardTests(SimpleTestCase):
     def test_category_of_only_ratings_removed(self):
         out = clean_resume_content(_skills('80%', '90%'))
         self.assertEqual(out['skills'], [])
+
+    def test_numeric_facts_kept_in_additional_sections(self):
+        entries = [{'heading': '100', 'detail': 'Countries visited'}, {'heading': 'Awards', 'bullets': ['365']}]
+        content = {'additional_sections': [{'title': 'Facts', 'entries': entries}]}
+        stats = {}
+        out = clean_resume_content(content, stats)
+        self.assertEqual(out['additional_sections'][0]['entries'], entries)
+        self.assertEqual(stats['chart_values_dropped'], 0)
+
+    def test_kept_entry_with_numeric_heading_not_counted(self):
+        entry = {'heading': '30', 'detail': 'Sleep'}
+        stats = {}
+        clean_resume_content({'additional_sections': [{'title': 'A Day', 'entries': [entry]}]}, stats)
+        self.assertEqual(stats['chart_values_dropped'], 0)
 
     def test_empty_category_kept(self):
         out = clean_resume_content(_skills())

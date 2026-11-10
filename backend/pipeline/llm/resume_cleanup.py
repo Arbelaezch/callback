@@ -12,9 +12,13 @@ import re
 
 _PREFIX_STRIP = ' ,;|-–—·\t'
 _SEPARATORS = ',;|-–—·'
-_RATING_VALUE = re.compile(
-    r'^\s*(?:\d{1,3}(?:\.\d+)?\s*(?:%|/\s*\d{1,3})?|[●○◐◑◒◓◉◯★☆✦✧■□▪▫◆◇•]+)\s*$'
-)
+_GLYPH_RUN = re.compile(r'^\s*[●○◐◑◒◓◉◯★☆✦✧■□▪▫◆◇•]+\s*$')
+_PERCENT = re.compile(r'^\s*\d{1,3}(?:\.\d+)?\s*%\s*$')
+_SCALE = re.compile(r'^\s*\d{1,2}(?:\.\d+)?\s*/\s*(?:5|10|100)\s*$')
+_BARE_NUMBER = re.compile(r'^\s*\d{1,3}(?:\.\d+)?\s*$')
+# A bare number is only a rating when it fits a rating scale; "365" or "911" are facts.
+_BARE_RATING_MAX = 10
+_BARE_CHART_MAX = 100
 _TRAILING_GLYPHS = re.compile(r'\s*[●○◐◑◒◓◉◯★☆✦✧■□▪▫◆◇]+\s*$')
 _DATE_FILLER = {'expected', 'anticipated', 'graduated', 'graduation', 'grad', 'class', 'of'}
 
@@ -58,8 +62,12 @@ def _drop_repeated_degree(entry: dict) -> int:
     return dropped
 
 
-def _is_rating(value) -> bool:
-    return isinstance(value, str) and bool(_RATING_VALUE.match(value))
+def _is_rating(value, bare_max=_BARE_RATING_MAX) -> bool:
+    if not isinstance(value, str):
+        return False
+    if _GLYPH_RUN.match(value) or _PERCENT.match(value) or _SCALE.match(value):
+        return True
+    return bool(_BARE_NUMBER.match(value)) and float(value) <= bare_max
 
 
 def _blank(value) -> bool:
@@ -112,16 +120,18 @@ def _clean_additional(sections: list) -> int:
                 entry['bullets'] = kept_bullets
                 bullets = kept_bullets
             heading, detail = entry.get('heading'), entry.get('detail')
-            heading_rating, detail_rating = _is_rating(heading), _is_rating(detail)
-            found += heading_rating + detail_rating
+            heading_rating = _is_rating(heading, _BARE_CHART_MAX)
+            detail_rating = _is_rating(detail, _BARE_CHART_MAX)
             entry_gone = (
                 (heading_rating or _blank(heading))
                 and (detail_rating or _blank(detail))
                 and (not isinstance(bullets, list) or not bullets)
+                and (found or heading_rating or detail_rating)
             )
-            dropped += found
-            if found and entry_gone:
+            if entry_gone:
+                dropped += found + heading_rating + detail_rating
                 continue
+            dropped += found
             kept_entries.append(entry)
         section['entries'] = kept_entries
         if before and not kept_entries:
