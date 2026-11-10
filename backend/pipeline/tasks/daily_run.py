@@ -13,7 +13,7 @@ Sequence
 
 Error policy
 ------------
-Per-search errors are caught, logged, and recorded on the run log.
+Per-search errors are caught and logged; the run log gets a generic message, details go to server logs only.
 A failure on one search never aborts others.
 """
 
@@ -27,6 +27,8 @@ from .score_jobs import score_jobs
 from .apply_job import apply_jobs
 
 logger = logging.getLogger(__name__)
+
+RUN_FAILED_ERROR = 'The run failed because of an internal error. Please try again later.'
 
 
 def _run_one_search(search: Search) -> None:
@@ -98,9 +100,9 @@ def _run_one_search(search: Search) -> None:
             log.jobs_applied, log.jobs_failed, log.status,
         )
 
-    except Exception as exc:
+    except Exception:
         log.status = 'failed'
-        log.error = str(exc)
+        log.error = RUN_FAILED_ERROR
         log.save(update_fields=['status', 'error'])
         logger.exception('daily_run: unexpected error for search_id=%d', search.pk)
 
