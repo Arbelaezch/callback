@@ -547,6 +547,21 @@ class OriginCheckTests(APITestCase):
         self._assert_rejected(self._upload(HTTP_ORIGIN=EVIL_ORIGIN))
         self.assertFalse(Resume.objects.exists())
 
+    def test_cookie_authenticated_delete_from_foreign_origin_rejected(self):
+        resume = Resume.objects.create(
+            user=self.user, s3_key='k', filename='r.pdf', status='ready', is_default=False,
+        )
+        self._set_access_cookie()
+        url = f'/api/users/resumes/{resume.pk}/'
+        with patch('users.views.delete_resume') as delete:
+            self._assert_rejected(self.client.delete(url, HTTP_ORIGIN=EVIL_ORIGIN))
+            self._assert_rejected(self.client.delete(url))
+            delete.assert_not_called()
+            self.assertTrue(Resume.objects.filter(pk=resume.pk).exists())
+            response = self.client.delete(url, HTTP_ORIGIN=ALLOWED_ORIGIN)
+        self.assertEqual(response.status_code, 204)
+        self.assertFalse(Resume.objects.filter(pk=resume.pk).exists())
+
     def test_cookie_authenticated_write_from_allowed_origin_passes(self):
         self._set_access_cookie()
         self.assertEqual(self._upload(HTTP_ORIGIN=ALLOWED_ORIGIN).status_code, 400)
