@@ -38,5 +38,5 @@ gates = [
 [factory]
 allowed_tools = [
   # Real LLM run for prompt checks (#35); spends API credits. Wrapper script because rules cannot cd or set env.
-  "Bash(scripts/check-tailoring.sh*)",
+  "Bash(scripts/check-tailoring.sh)",
 ]
