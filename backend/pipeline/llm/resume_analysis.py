@@ -12,6 +12,7 @@ from callback.config import (
 
 from .client import call_structured
 from .prompts import RESUME_CONTENT_SYSTEM, RESUME_CONTENT_USER, RESUME_LAYOUT_SYSTEM, RESUME_LAYOUT_USER
+from .resume_cleanup import clean_resume_content
 from .schemas import RESUME_CONTENT_ANALYSIS_SCHEMA, RESUME_LAYOUT_SCHEMA
 
 logger = logging.getLogger(__name__)
@@ -59,10 +60,15 @@ def analyze_resume(pdf_bytes: bytes) -> dict:
         max_tokens=LLM_MAX_TOKENS_RESUME_LAYOUT,
         timeout=LLM_TIMEOUT_SECONDS_LONG,
     )
-    content = extracted['content']
+    stats = {}
+    content = clean_resume_content(extracted['content'], stats)
     source_sections = extracted.get('source_sections') or []
     logger.info(
         'Analysed resume in two calls: %d experience entries, %d source headings',
         len(content.get('experience', [])), len(source_sections),
+    )
+    logger.info(
+        'Resume cleanup: %d companies stripped of location, %d repeated degree details dropped',
+        stats.get('companies_stripped', 0), stats.get('details_dropped', 0),
     )
     return {'content': content, 'layout': {**layout, 'source_sections': source_sections}}

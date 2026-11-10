@@ -90,6 +90,21 @@ class StrictSchemaTests(SimpleTestCase):
         self.assertNotIn('source_sections', strict['properties'])
         self.assertIn('additional', strict['properties']['section_order']['items']['enum'])
 
+    def test_layout_schema_name_style_is_required_in_strict_schema(self):
+        strict = client._strict_schema(RESUME_LAYOUT_SCHEMA)
+        self.assertIn('name_style', strict['required'])
+        self.assertEqual(
+            RESUME_LAYOUT_SCHEMA['properties']['name_style'],
+            {'type': 'string', 'enum': ['normal', 'uppercase', 'small_caps']},
+        )
+
+    def test_name_style_enum_matches_rendering(self):
+        from documents.rendering import NAME_STYLES, resolve_layout
+        values = RESUME_LAYOUT_SCHEMA['properties']['name_style']['enum']
+        self.assertEqual(set(values), set(NAME_STYLES))
+        for v in values:
+            self.assertEqual(resolve_layout({'name_style': v})['name_style'], v)
+
 
 def _grammar_weight(schema):
     """Rough size of the grammar the API compiles: typed nodes plus enum values, after strict closing."""

@@ -28,6 +28,8 @@ DEFAULT_SECTION_TITLES = {
     'skills': 'Skills',
 }
 _SECTION_TITLE_MAX = 60
+NAME_STYLES = ('normal', 'uppercase', 'small_caps')
+_FIXED_SECTIONS = ('summary', 'experience', 'projects', 'education', 'skills')
 
 _HEX_COLOR = re.compile(r'^#[0-9a-fA-F]{6}$')
 
@@ -91,6 +93,7 @@ def resolve_layout(layout: dict | None) -> dict:
         'margin_bottom': round(_number(margins.get('bottom'), 0.6, 0.3, 1.25), 2),
         'margin_left': round(_number(margins.get('left'), 0.7, 0.3, 1.25), 2),
         'header_align': _choice(layout.get('header_alignment'), ('left', 'center'), 'left'),
+        'name_style': _choice(layout.get('name_style'), NAME_STYLES, 'normal'),
         'title_style': _choice(
             layout.get('section_title_style'), ('uppercase', 'small_caps', 'title_case'), 'uppercase',
         ),
@@ -135,12 +138,60 @@ def _section_titles(source_sections) -> dict[str, str]:
     return titles
 
 
+def _norm_title(title) -> str:
+    return ' '.join(title.split()).casefold()
+
+
+def resume_blocks(section_order, source_sections, additional_sections) -> list[dict]:
+    """Order the resume's blocks, placing each additional section where the source had it.
+
+    An additional section follows the fixed section printed before it in
+    source_sections. Ones not found there render at the 'additional' slot.
+    """
+    sections = [
+        s for s in (additional_sections if isinstance(additional_sections, list) else [])
+        if isinstance(s, dict) and isinstance(s.get('entries'), list) and s['entries']
+    ]
+    anchors = {}
+    last_fixed = None
+    for item in source_sections if isinstance(source_sections, list) else []:
+        if not isinstance(item, dict):
+            continue
+        placed = item.get('placed_in')
+        if placed in _FIXED_SECTIONS:
+            last_fixed = placed
+        elif placed == 'additional' and isinstance(item.get('title'), str):
+            anchors.setdefault(_norm_title(item['title']), last_fixed)
+
+    def known(section):
+        title = section.get('title')
+        return isinstance(title, str) and _norm_title(title) in anchors
+
+    def block(section):
+        return {'key': 'additional', 'section': section}
+
+    blocks = [block(s) for s in sections if known(s) and anchors[_norm_title(s['title'])] is None]
+    for key in section_order:
+        if key == 'additional':
+            blocks.extend(block(s) for s in sections if not known(s))
+        else:
+            blocks.append({'key': key})
+            blocks.extend(
+                block(s) for s in sections if known(s) and anchors[_norm_title(s['title'])] == key
+            )
+    return blocks
+
+
 def render_resume_html(content: dict, layout: dict | None) -> str:
     resolved = resolve_layout(layout)
     return render_to_string('documents/resume.html', {
         'content': content or {},
         'header': (content or {}).get('header') or {},
         'layout': resolved,
+        'blocks': resume_blocks(
+            resolved['section_order'], (layout or {}).get('source_sections'),
+            (content or {}).get('additional_sections'),
+        ),
         'css': render_to_string('documents/styles.css', {'layout': resolved}),
     })
 
