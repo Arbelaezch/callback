@@ -1,6 +1,7 @@
 from django.test import SimpleTestCase
 
-from documents.notices import layout_notices
+from callback.config import DECORATIVE_ELEMENT_KINDS
+from documents.notices import DECORATIVE_LABELS, layout_notices
 
 
 def src(title, placed_in):
@@ -83,3 +84,6 @@ class DecorativeNoticeTests(SimpleTestCase):
         }
         codes = [n['code'] for n in layout_notices({}, layout)]
         self.assertEqual(codes, ['columns_simplified', 'decorative_dropped', 'sections_unplaced'])
+
+    def test_every_kind_has_a_label(self):
+        self.assertEqual(set(DECORATIVE_LABELS), set(DECORATIVE_ELEMENT_KINDS))
