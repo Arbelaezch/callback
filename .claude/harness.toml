@@ -37,6 +37,6 @@ gates = [
 
 [factory]
 allowed_tools = [
-  # Real (non-mocked) LLM run for prompt checks like #35; spends API credits. Absolute paths because rules cannot use cd.
-  "Bash(/Users/christianarbelaez/code/personal-projects/callback/backend/env/bin/python /Users/christianarbelaez/code/personal-projects/callback/backend/manage.py check_tailoring*)",
+  # Real LLM run for prompt checks (#35); spends API credits. Wrapper script because rules cannot cd or set env.
+  "Bash(scripts/check-tailoring.sh*)",
 ]
