@@ -144,6 +144,13 @@ class AnalyzeResumeTests(SimpleTestCase):
         self.assertEqual(result['layout']['columns'], 2)
 
     @patch('pipeline.llm.resume_analysis.call_structured')
+    def test_cleans_extracted_content(self, mock_call):
+        content = {**self.CONTENT, 'experience': [{'company': 'Acme, Berlin', 'location': 'Berlin'}]}
+        mock_call.side_effect = [{'content': content, 'source_sections': []}, dict(self.LAYOUT)]
+        result = analyze_resume(self.PDF)
+        self.assertEqual(result['content']['experience'][0]['company'], 'Acme')
+
+    @patch('pipeline.llm.resume_analysis.call_structured')
     def test_missing_source_sections_becomes_empty_list(self, mock_call):
         mock_call.side_effect = [{'content': self.CONTENT}, dict(self.LAYOUT)]
         self.assertEqual(analyze_resume(self.PDF)['layout']['source_sections'], [])
@@ -153,6 +160,14 @@ class AnalyzeResumeTests(SimpleTestCase):
             self.assertIn(phrase, RESUME_CONTENT_SYSTEM)
         for phrase in ('columns', 'margin', 'section_order', 'font_family', 'Do not transcribe the content.'):
             self.assertIn(phrase, RESUME_LAYOUT_SYSTEM)
+
+    def test_prompts_cover_issue_32_rules(self):
+        for phrase in (
+            'forthe', 'location', 'degree', 'Copy every fact exactly',
+            'do not summarise, correct, add or drop anything',
+        ):
+            self.assertIn(phrase, RESUME_CONTENT_SYSTEM)
+        self.assertIn('name_style', RESUME_LAYOUT_SYSTEM)
 
     @patch('pipeline.llm.resume_analysis.call_structured')
     def test_layout_failure_propagates(self, mock_call):

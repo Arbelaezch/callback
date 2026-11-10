@@ -12,16 +12,16 @@
   <p class="contact">{% if header.email %}{{ header.email }}{% endif %}{% if header.phone %} · {{ header.phone }}{% endif %}{% if header.location %} · {{ header.location }}{% endif %}{% for link in header.links %} · {{ link }}{% endfor %}</p>
 </header>
 
-{% for key in layout.section_order %}
+{% for block in blocks %}{% with key=block.key %}
   {% if key == "summary" and content.summary %}
   <section><h2>{{ layout.section_titles.summary }}</h2><p>{{ content.summary }}</p></section>
   {% elif key == "experience" and content.experience %}
   <section><h2>{{ layout.section_titles.experience }}</h2>
     {% for job in content.experience %}
     <div class="entry">
-      <div class="entry-head"><span>{{ job.company }}{% if job.location %}, {{ job.location }}{% endif %}</span>
+      <div class="entry-head"><span>{{ job.company }}</span>
         <span class="dates">{{ job.start }}{% if job.start and job.end %} – {% endif %}{{ job.end }}</span></div>
-      <div class="entry-sub">{{ job.title }}</div>
+      <div class="entry-sub{% if job.location %} split{% endif %}"><span>{{ job.title }}</span>{% if job.location %}<span class="location">{{ job.location }}</span>{% endif %}</div>
       {% if job.bullets %}<ul>{% for b in job.bullets %}<li>{{ b }}</li>{% endfor %}</ul>{% endif %}
     </div>
     {% endfor %}
@@ -52,8 +52,8 @@
     <p class="skill-row">{% if group.category %}<strong>{{ group.category }}:</strong> {% endif %}{{ group.items|join:", " }}</p>
     {% endfor %}
   </section>
-  {% elif key == "additional" and content.additional_sections %}
-    {% for s in content.additional_sections %}{% if s.entries %}
+  {% elif key == "additional" %}
+    {% with s=block.section %}
   <section><h2>{{ s.title }}</h2>
       {% for e in s.entries %}
     <div class="entry">
@@ -63,8 +63,8 @@
     </div>
       {% endfor %}
   </section>
-    {% endif %}{% endfor %}
+    {% endwith %}
   {% endif %}
-{% endfor %}
+{% endwith %}{% endfor %}
 </body>
 </html>

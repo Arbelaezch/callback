@@ -4,6 +4,7 @@ from django.test import SimpleTestCase
 
 from documents.rendering import (
     html_to_pdf,
+    resume_blocks,
     render_cover_letter_html,
     render_resume_html,
     resolve_layout,
@@ -191,6 +192,99 @@ class RenderResumeTests(SimpleTestCase):
         }]}
         _, pages = html_to_pdf(render_resume_html(long, LAYOUT))
         self.assertGreater(pages, 1)
+
+
+def _leadership(title='Leadership Experience'):
+    return {'title': title, 'entries': [{'heading': 'Club president'}]}
+
+
+def _src(*pairs):
+    return [{'title': t, 'placed_in': p} for t, p in pairs]
+
+
+class RenderResumeIssue32Tests(SimpleTestCase):
+    def test_name_style_resolved_and_defaulted(self):
+        self.assertEqual(resolve_layout({})['name_style'], 'normal')
+        self.assertEqual(resolve_layout({'name_style': 'small_caps'})['name_style'], 'small_caps')
+        self.assertEqual(resolve_layout({'name_style': 'uppercase'})['name_style'], 'uppercase')
+        self.assertEqual(resolve_layout({'name_style': 'x; color:red'})['name_style'], 'normal')
+
+    def test_name_style_css(self):
+        def h1_rule(html):
+            start = html.index('header h1 {')
+            return html[start:html.index('}', start)]
+        small = render_resume_html(CONTENT, {**LAYOUT, 'name_style': 'small_caps'})
+        self.assertIn('font-variant: small-caps', h1_rule(small))
+        self.assertNotIn('text-transform: uppercase', h1_rule(render_resume_html(CONTENT, LAYOUT)))
+
+    def test_location_not_joined_to_company(self):
+        content = {**CONTENT, 'experience': [{
+            'company': 'Dunamu Inc.', 'title': 'Engineer', 'location': 'Seoul, S.Korea',
+            'start': '2020', 'end': '2021', 'bullets': [],
+        }]}
+        html = render_resume_html(content, LAYOUT)
+        self.assertIn('<span>Dunamu Inc.</span>', html)
+        self.assertIn('<span class="location">Seoul, S.Korea</span>', html)
+        self.assertNotIn('Dunamu Inc., Seoul', html)
+
+    def test_additional_section_keeps_source_position(self):
+        content = {**CONTENT, 'additional_sections': [_leadership()]}
+        layout = {
+            'section_order': ['education', 'experience', 'skills', 'additional'],
+            'source_sections': _src(
+                ('Education', 'education'), ('Experience', 'experience'),
+                ('Leadership  experience', 'additional'), ('Skills', 'skills'),
+            ),
+        }
+        html = render_resume_html(content, layout)
+        self.assertLess(html.index('<h2>Experience</h2>'), html.index('<h2>Leadership Experience</h2>'))
+        self.assertLess(html.index('<h2>Leadership Experience</h2>'), html.index('<h2>Skills</h2>'))
+
+    def test_additional_sections_split_by_anchor(self):
+        content = {**CONTENT, 'additional_sections': [
+            _leadership(), _leadership('Awards'), _leadership('Certifications'),
+        ]}
+        layout = {
+            'section_order': ['experience', 'skills', 'additional'],
+            'source_sections': _src(
+                ('Experience', 'experience'), ('Leadership Experience', 'additional'),
+                ('Skills', 'skills'), ('Awards', 'additional'),
+            ),
+        }
+        html = render_resume_html(content, layout)
+        lead, skills = html.index('<h2>Leadership Experience</h2>'), html.index('<h2>Skills</h2>')
+        awards, certs = html.index('<h2>Awards</h2>'), html.index('<h2>Certifications</h2>')
+        self.assertLess(lead, skills)
+        self.assertLess(skills, awards)
+        self.assertLess(awards, certs)
+
+    def test_additional_before_any_fixed_section_goes_first(self):
+        content = {**CONTENT, 'additional_sections': [_leadership('Objective')]}
+        layout = {
+            'section_order': ['experience', 'skills', 'additional'],
+            'source_sections': _src(('Objective', 'additional'), ('Experience', 'experience')),
+        }
+        html = render_resume_html(content, layout)
+        self.assertLess(html.index('<h2>Objective</h2>'), html.index('<h2>Experience</h2>'))
+
+    def test_resume_blocks_unit(self):
+        order = ['summary', 'experience', 'projects', 'education', 'skills', 'additional']
+        for source in ('bogus', [None, 'x'], None):
+            blocks = resume_blocks(order, source, None)
+            self.assertEqual([b['key'] for b in blocks], order[:-1])
+        blocks = resume_blocks(order, [], [{'title': 'Empty', 'entries': []}, _leadership()])
+        self.assertEqual(len([b for b in blocks if 'section' in b]), 1)
+        self.assertEqual(len([b for b in blocks if b['key'] == 'skills']), 1)
+
+    def test_long_company_name_stays_one_page(self):
+        content = {**CONTENT, 'experience': [{
+            'company': ('Very Long Organisation ' * 7)[:150], 'title': 'T',
+            'start': '2020', 'end': '2021', 'bullets': ['x'],
+        }]}
+        html = render_resume_html(content, LAYOUT)
+        self.assertIn('flex: 1 1 auto; min-width: 0', html)
+        _, pages = html_to_pdf(html)
+        self.assertEqual(pages, 1)
 
 
 class RenderCoverLetterTests(SimpleTestCase):

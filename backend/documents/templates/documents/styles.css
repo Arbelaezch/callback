@@ -15,7 +15,7 @@ body {
   color: #111;
 }
 header { text-align: {{ layout.header_align }}; margin-bottom: 0.9em; }
-header h1 { margin: 0; font-size: 1.9em; line-height: 1.15; {% if layout.accent_color %}color: {{ layout.accent_color }};{% endif %} }
+header h1 { margin: 0; font-size: 1.9em; line-height: 1.15; {% if layout.name_style == "uppercase" %}text-transform: uppercase; letter-spacing: 0.04em;{% endif %}{% if layout.name_style == "small_caps" %}font-variant: small-caps; letter-spacing: 0.03em;{% endif %}{% if layout.accent_color %}color: {{ layout.accent_color }};{% endif %} }
 header .headline { margin: 0.1em 0 0; font-size: 1.05em; }
 header .contact { margin: 0.25em 0 0; font-size: 0.95em; }
 section { margin-top: 0.85em; }
@@ -29,8 +29,11 @@ section h2 {
 }
 .entry { margin-bottom: 0.55em; page-break-inside: avoid; }
 .entry-head { display: flex; justify-content: space-between; font-weight: bold; }
-.entry-head .dates { font-weight: normal; white-space: nowrap; }
+.entry-head > span:first-child { flex: 1 1 auto; min-width: 0; }
+.entry-head .dates { font-weight: normal; white-space: nowrap; flex: 0 0 auto; margin-left: 1em; text-align: right; }
 .entry-sub { font-style: italic; }
+.entry-sub.split { display: flex; justify-content: space-between; }
+.entry-sub .location { font-style: normal; white-space: nowrap; flex: 0 0 auto; margin-left: 1em; }
 ul { margin: 0.2em 0 0; padding-left: 1.2em; {% if layout.bullet_style == "dash" %}list-style-type: "– ";{% endif %}{% if layout.bullet_style == "none" %}list-style: none; padding-left: 0;{% endif %} }
 li { margin-bottom: 0.15em; }
 p { margin: 0 0 0.8em; }

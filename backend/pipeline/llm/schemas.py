@@ -85,7 +85,8 @@ RESUME_CONTENT_SCHEMA = {
                 'required': ['items'],
             },
         },
-        # Optional (not in `required` below) so content stored before it existed stays valid.
+        # The strict schema sent to the model requires every property (client._strict_schema),
+        # but content stored before this field existed may lack it, so readers must default it.
         'additional_sections': {
             'type': 'array',
             'items': {
@@ -133,6 +134,7 @@ RESUME_LAYOUT_SCHEMA = {
         },
         'line_height': {'type': 'number'},
         'header_alignment': {'type': 'string', 'enum': ['left', 'center']},
+        'name_style': {'type': 'string', 'enum': ['normal', 'uppercase', 'small_caps']},
         'section_order': {
             'type': 'array',
             'items': {
