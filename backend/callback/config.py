@@ -31,6 +31,8 @@ LLM_MAX_TOKENS_WRITER = 8192
 # Resume layout call: the layout spec is small (no transcribed content), so it needs far less than the writer
 LLM_MAX_TOKENS_RESUME_LAYOUT = 2048
 LLM_MAX_TOKENS_SCOUT = 2048
+# Decorative resume elements that are detected and dropped (see documents/notices.py)
+DECORATIVE_ELEMENT_KINDS = ('icons', 'charts', 'skill_ratings', 'skill_pills')
 LLM_TIMEOUT_SECONDS_LONG = 120  # PDF analysis and document writing
 # Cover letter sample extraction runs inside the upload request, so keep it under the 30s Next.js proxy limit
 LLM_TIMEOUT_SECONDS_EXTRACTION = 25

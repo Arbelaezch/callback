@@ -122,6 +122,13 @@ def _grammar_weight(schema):
 # (400 "The compiled grammar is too large"). Verified against the real API on
 # 2026-11-03: RESUME_CONTENT_ANALYSIS_SCHEMA (weight 60) compiled; the old combined
 # content+layout analysis schema (weight 96) was rejected. Cap = largest passing schema.
+    def test_decorative_elements_enum_and_required(self):
+        from callback.config import DECORATIVE_ELEMENT_KINDS
+        prop = RESUME_LAYOUT_SCHEMA['properties']['decorative_elements']
+        self.assertEqual(prop['items']['enum'], list(DECORATIVE_ELEMENT_KINDS))
+        self.assertIn('decorative_elements', client._strict_schema(RESUME_LAYOUT_SCHEMA)['required'])
+
+
 MAX_SCHEMA_WEIGHT = 60
 
 
