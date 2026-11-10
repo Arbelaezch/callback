@@ -1,5 +1,5 @@
 from datetime import timedelta
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
@@ -7,6 +7,7 @@ from django.conf import settings
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
 from django.utils import timezone
+from redis.exceptions import ConnectionError as RedisConnectionError
 from rest_framework.test import APITestCase
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken
@@ -18,6 +19,7 @@ from callback.config import (
     REFRESH_ROTATION_GRACE_SECONDS,
     RESUME_UPLOAD_MAX_BYTES,
 )
+from callback.throttles import IPScopedRateThrottle
 from documents.models import ParsedResume
 from users.models import Resume
 from users.views import PRIMARY_DELETE_ERROR
@@ -451,6 +453,40 @@ class AuthThrottleTests(APITestCase):
             {'username': 'new6', 'email': 'new6@example.com', 'password': 'Str0ngPass!word'},
         )
         self.assertEqual(response.status_code, 429)
+
+    @override_settings(REST_FRAMEWORK=ONE_PROXY)
+    def test_edge_topology_keys_on_overwritten_forwarded_for(self):
+        # Prod: REMOTE_ADDR is always the Next container and X-Forwarded-For is
+        # the single client address host nginx wrote.
+        next_container = {'REMOTE_ADDR': '172.18.0.5'}
+        for _ in range(10):
+            self._login(HTTP_X_FORWARDED_FOR='203.0.113.7', **next_container)
+        self.assertEqual(
+            self._login('right', HTTP_X_FORWARDED_FOR='203.0.113.7', **next_container).status_code,
+            429,
+        )
+        self.assertEqual(
+            self._login('right', HTTP_X_FORWARDED_FOR='203.0.113.8', **next_container).status_code,
+            200,
+        )
+
+    def _broken_cache(self):
+        broken = MagicMock()
+        broken.get.side_effect = RedisConnectionError('redis down')
+        return patch.object(IPScopedRateThrottle, 'cache', broken)
+
+    def test_login_fails_open_when_cache_down(self):
+        with self._broken_cache(), self.assertLogs('callback.throttles', 'WARNING'):
+            self.assertEqual(self._login('right').status_code, 200)
+            self.assertEqual(self._login().status_code, 401)
+
+    def test_register_fails_open_when_cache_down(self):
+        with self._broken_cache(), self.assertLogs('callback.throttles', 'WARNING'):
+            response = self.client.post(
+                '/api/auth/register/',
+                {'username': 'newbie', 'email': 'newbie@example.com', 'password': 'Str0ngPass!word'},
+            )
+        self.assertEqual(response.status_code, 201, response.data)
 
     def test_refresh_never_throttled(self):
         for _ in range(15):

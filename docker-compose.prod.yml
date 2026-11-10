@@ -1,19 +1,29 @@
 # docker-compose.prod.yml — production overrides
 # Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Requires Docker Compose v2.24.4 or later (`!reset` and `!override` on `ports`).
+# Compose merges `ports` lists across files, so `ports: []` would not remove the
+# base mappings.
+# Host nginx is the only public entry point and must use the snippets in
+# deploy/nginx/ (it overwrites X-Forwarded-For; Django trusts exactly one hop).
+# See AGENTS.md (Settings) and issue #23.
 
 services:
 
   db:
-    ports: []              # don't expose DB port in prod
+    ports: !reset []       # don't expose DB port in prod
 
   redis:
-    ports: []              # don't expose Redis port in prod
+    ports: !reset []       # don't expose Redis port in prod
 
   backend:
     command: gunicorn callback.wsgi:application --bind 0.0.0.0:8000 --workers 3 --timeout 120
     volumes: []            # no live mount in prod — use built image
+    ports: !reset []       # Next reaches Django on the compose network (backend:8000)
     environment:
       - DEBUG=False
+      - NUM_PROXIES=1      # host nginx overwrites X-Forwarded-For with the real client IP
+      - CACHE_URL=redis://:${REDIS_PASSWORD}@redis:6379/1   # shared throttle counters; DB 1, Celery uses 0
 
   celery:
     volumes: []
@@ -28,5 +38,6 @@ services:
   frontend:
     command: node server.js      # runs next start (assumes next build already ran)
     volumes: []
+    ports: !override ["127.0.0.1:3000:3000"]   # only host nginx can reach Next
     environment:
       - NODE_ENV=production

@@ -115,6 +115,9 @@ THROTTLE_RATE_GENERATE = '10/hour'
 THROTTLE_RATE_COVER_LETTER_UPLOAD = '10/hour'
 THROTTLE_RATE_LOGIN = '10/min'
 THROTTLE_RATE_REGISTER = '5/hour'
+# Connect and read timeout for the Redis throttle cache (CACHE_URL). Throttles
+# fail open on cache errors, so a slow Redis must not stall login.
+CACHE_SOCKET_TIMEOUT_SECONDS = 1
 
 # Daily caps, counted from DB rows over a rolling 24 hours, per user.
 DAILY_PARSE_LIMIT = 30

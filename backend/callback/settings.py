@@ -125,7 +125,9 @@ REST_FRAMEWORK = {
     # ignores X-Forwarded-For (immune to header spoofing), but behind the Next.js
     # rewrite that means one shared login/register bucket for the whole site.
     # 1 is only safe if an edge proxy overwrites X-Forwarded-For and Django's
-    # port is not public. See AGENTS.md (Settings).
+    # port is not public. Prod sets 1 in docker-compose.prod.yml, behind host
+    # nginx, which overwrites X-Forwarded-For with the real client IP (issue
+    # #23). See AGENTS.md (Settings).
     'NUM_PROXIES': int(os.environ.get('NUM_PROXIES', '0')),
 }
 
@@ -140,6 +142,11 @@ if os.environ.get('CACHE_URL'):
         'default': {
             'BACKEND': 'django.core.cache.backends.redis.RedisCache',
             'LOCATION': os.environ['CACHE_URL'],
+            # Passed through to the redis-py connection pool.
+            'OPTIONS': {
+                'socket_connect_timeout': config.CACHE_SOCKET_TIMEOUT_SECONDS,
+                'socket_timeout': config.CACHE_SOCKET_TIMEOUT_SECONDS,
+            },
         }
     }
 

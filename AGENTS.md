@@ -45,7 +45,7 @@ Self-hosted on a Dell OptiPlex 7040. Browser Use runs in AWS Lambda and never to
 
 ```
 Host (OptiPlex)
-├── Nginx (reverse proxy, host-level)
+├── Nginx (reverse proxy, host-level; config snippets in deploy/nginx/)
 ├── callback/docker-compose.yml
 │   ├── backend (gunicorn in prod, runserver in dev)
 │   ├── celery worker
@@ -216,7 +216,7 @@ Existing code that V2 and V3 will build on. V1 does not use it. When V2 or V3 st
 
 **V2: discovery.** `Search` is a saved set of requirements (role titles, cities, location types, seniority, salary, excluded companies, `daily_target`, `job_cooldown`). `JobSeen` is the user-scoped dedup table (rows are never deleted; re-eligibility is `seen_at >= now - job_cooldown`). `Agent` is a per-user master on/off switch. `Application` holds a discovered job with its score and status; V2 would add the approve/dismiss state here or beside it. Flow: Celery beat (per scheduled `Search`, DB-backed via `django-celery-beat`) or manual trigger -> `Agent.active` and `Search.active` checks -> JSearch fetch -> dedup -> LLM score (`score_job`, threshold `LLM_SCORE_THRESHOLD`, capped by `daily_target`) -> `RunLog`. Code: `pipeline/tasks/{daily_run,scan_jobs,score_jobs}.py`, `pipeline/jsearch/`, `jobs/` (views under `/api/jobs/*`). Whether the crawler stays a Celery task or moves to Lambda is undecided.
 
-**V3: applying.** `ats/utils.detect_ats` classifies apply URLs; there are no Greenhouse or Lever clients (they need employer keys), so applications would go through the browser agent. `apply_job` dispatches to Lambda in prod (`USE_LAMBDA=True`) or runs `lambda_runner` in-process locally. Lambda `callback-submit-application` runs Browser Use against the apply URL and POSTs `{status, failure_reason}` to `/api/pipeline/applications/<id>/callback/` with the `X-Callback-Secret` header; it does not write to Postgres directly. The payload carries a presigned `resume_url`. It deploys as a Docker image to ECR through `.github/workflows/deploy-lambda.yml` on pushes to `main` that touch `lambda/**`; memory, timeout and env vars are set by hand in AWS.
+**V3: applying.** `ats/utils.detect_ats` classifies apply URLs; there are no Greenhouse or Lever clients (they need employer keys), so applications would go through the browser agent. `apply_job` dispatches to Lambda in prod (`USE_LAMBDA=True`) or runs `lambda_runner` in-process locally. Lambda `callback-submit-application` runs Browser Use against the apply URL and POSTs `{status, failure_reason}` to `/api/pipeline/applications/<id>/callback/` with the `X-Callback-Secret` header; it does not write to Postgres directly. `DJANGO_CALLBACK_URL` must be the public domain because port 8000 is not published in prod. The payload carries a presigned `resume_url`. It deploys as a Docker image to ECR through `.github/workflows/deploy-lambda.yml` on pushes to `main` that touch `lambda/**`; memory, timeout and env vars are set by hand in AWS.
 
 **Known issues, left as found:** the local import path in `apply_job` is wrong, `personalize_cover_letter` is never called, an application is marked `submitted` as soon as the async Lambda invoke returns, and `send_digest` is not written. `/dashboard` has a setState-in-effect lint error and `/onboarding` an unescaped `'`.
 
@@ -253,7 +253,7 @@ JWT via `djangorestframework-simplejwt`. Tokens in httpOnly cookies, never local
 ### Auth: `/api/auth/`
 | Method | Path | Description |
 |---|---|---|
-| POST | `/register/`, `/login/`, `/logout/`, `/token/refresh/` | Auth. Login (10/min per IP) and register (5/hour per IP) are throttled: 429 `{detail}` plus `Retry-After`. Refresh and logout are not. All four return 403 `{detail}` on a cross-site or missing Origin/Referer |
+| POST | `/register/`, `/login/`, `/logout/`, `/token/refresh/` | Auth. Login (10/min per IP) and register (5/hour per IP) are throttled per real client IP, see [#23](https://github.com/Arbelaezch/callback/issues/23): 429 `{detail}` plus `Retry-After`. Refresh and logout are not. All four return 403 `{detail}` on a cross-site or missing Origin/Referer |
 | GET | `/me/` | Current user |
 
 ### Users: `/api/users/`
@@ -293,7 +293,9 @@ Non-secret constants live in `callback/config.py` and are imported into `setting
 - Hardcoded constant: `config.py`.
 - Secret: `.env` only, never committed.
 
-Application code imports constants from `callback.config`, not `django.conf.settings`, unless Django itself requires the value there. Throttle rates, daily caps and in-flight windows are in `config.py`. `PARSE_INFLIGHT_MINUTES` and `GENERATION_INFLIGHT_MINUTES` must match `PARSE_POLL_TIMEOUT_MS` (profile page) and `GENERATION_POLL_TIMEOUT_MS` (job page) and stay below the `*_STALE_AFTER_MINUTES` values. `NUM_PROXIES` (env, default 0) is the number of reverse proxies in front of Django; with 0 the client IP is `REMOTE_ADDR` and `X-Forwarded-For` is ignored. The browser reaches Django only through the Next.js rewrite, so 0 means one site-wide login/register bucket; do not ship 0. Do not simply set it to the proxy count (1) either: Next keeps a client-supplied `X-Forwarded-For`, so an edge proxy must overwrite it and Django's port must not be public (tracked in issue #23). `CACHE_URL` (env, optional redis URL) shares throttle counters across workers; unset means per-process LocMem.
+Application code imports constants from `callback.config`, not `django.conf.settings`, unless Django itself requires the value there. Throttle rates, daily caps and in-flight windows are in `config.py`. `PARSE_INFLIGHT_MINUTES` and `GENERATION_INFLIGHT_MINUTES` must match `PARSE_POLL_TIMEOUT_MS` (profile page) and `GENERATION_POLL_TIMEOUT_MS` (job page) and stay below the `*_STALE_AFTER_MINUTES` values. `NUM_PROXIES` (env, default 0) is the number of reverse proxies in front of Django; with 0 the client IP is `REMOTE_ADDR` and `X-Forwarded-For` is ignored. The browser reaches Django only through the Next.js rewrite, so 0 means one site-wide login/register bucket; do not ship 0. Prod sets it to 1 ([#23](https://github.com/Arbelaezch/callback/issues/23)): host nginx (snippets in `deploy/nginx/`) recovers the real client IP from Cloudflare (`real_ip`, `CF-Connecting-IP`, trusting only Cloudflare ranges) and overwrites `X-Forwarded-For` with that single address. Next passes it through unchanged (per the Next 16.2.6 source it sets `X-Forwarded-For` only when missing and does not append), so DRF reads the one entry. This is safe only because `docker-compose.prod.yml` publishes no port for Django (8000) and binds Next (3000) to `127.0.0.1`. `CACHE_URL` (env, optional redis URL) shares throttle counters across workers; unset means per-process LocMem, and prod builds it as Redis DB 1 (Celery uses DB 0). Throttles fail open on Redis errors (request allowed, WARNING on logger `callback.throttles`; the DB-counted daily caps still bound cost).
+
+**Verify after deploy.** Run `for i in $(seq 1 11); do curl -s -o /dev/null -w '%{http_code}\n' -X POST -H 'Origin: https://<domain>' -H "X-Forwarded-For: 1.2.3.$i" -d 'username=x&password=y' https://<domain>/api/auth/login/; done`. The Origin header is needed because the origin check runs before throttling, and the spoofed value changes on every request. Expect ten 401/400 responses, then 429; a 429 only at the end proves the spoofed header does not reset the bucket. From outside the host, `curl http://<host>:8000/api/health/` and `http://<host>:3000` must fail to connect.
 
 
 Do not define `CELERY_BEAT_SCHEDULE`; scheduling is DB-backed via `django-celery-beat` (V2 groundwork).
